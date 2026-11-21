@@ -116,8 +116,8 @@ INCIDENTLAB_TEST(empty_comparison_input_is_safe) {
 
 INCIDENTLAB_TEST(every_scenario_uses_fresh_state) {
     const incidentlab::ComparisonReport report = cached();
-    const incidentlab::GlobalMetrics& baseline = by_id(report, "baseline").metrics.global;
-    const incidentlab::GlobalMetrics& full = by_id(report, "full").metrics.global;
+    const auto baseline = by_id(report, "baseline").metrics.global;
+    const auto full = by_id(report, "full").metrics.global;
     EXPECT(baseline.dead_lettered_requests == 0);
     EXPECT(baseline.circuit_openings == 0);
     EXPECT(full.dead_lettered_requests == 6);
@@ -214,8 +214,8 @@ INCIDENTLAB_TEST(failure_script_is_deterministic) {
 }
 
 INCIDENTLAB_TEST(retry_scenarios_schedule_retries) {
-    const incidentlab::GlobalMetrics& baseline = by_id(cached(), "baseline").metrics.global;
-    const incidentlab::ScenarioResult& retry = by_id(cached(), "retry");
+    const auto baseline = by_id(cached(), "baseline").metrics.global;
+    const auto retry = by_id(cached(), "retry");
     EXPECT(baseline.retries.retry_attempts == 0);
     EXPECT(count_type(by_id(cached(), "baseline").metrics, incidentlab::EventType::RetryScheduled) == 0);
     EXPECT(retry.metrics.global.retries.retry_attempts == 6);
@@ -224,8 +224,8 @@ INCIDENTLAB_TEST(retry_scenarios_schedule_retries) {
 }
 
 INCIDENTLAB_TEST(circuit_scenarios_open_the_breaker) {
-    const incidentlab::ScenarioResult& circuit = by_id(cached(), "circuit");
-    const incidentlab::ScenarioResult& full = by_id(cached(), "full");
+    const auto circuit = by_id(cached(), "circuit");
+    const auto full = by_id(cached(), "full");
     EXPECT(circuit.metrics.global.circuit_openings == 2);
     EXPECT(count_type(circuit.metrics, incidentlab::EventType::CircuitOpened) == 2);
     EXPECT(full.metrics.global.circuit_openings == 2);
@@ -293,7 +293,7 @@ INCIDENTLAB_TEST(missing_throughput_does_not_produce_nan) {
 }
 
 INCIDENTLAB_TEST(circuit_rejections_follow_stage6) {
-    const incidentlab::GlobalMetrics& circuit = by_id(cached(), "circuit").metrics.global;
+    const auto circuit = by_id(cached(), "circuit").metrics.global;
     EXPECT(circuit.outcomes.circuit_rejected == 1);
     EXPECT(circuit.outcomes.failed == 5);
     EXPECT(circuit.outcomes.successful == 3);
@@ -407,27 +407,27 @@ INCIDENTLAB_TEST(stage7_reset_restores_the_ready_clock) {
 }
 
 INCIDENTLAB_TEST(predefined_results_stay_exact) {
-    const incidentlab::GlobalMetrics& baseline = by_id(cached(), "baseline").metrics.global;
+    const auto baseline = by_id(cached(), "baseline").metrics.global;
     EXPECT(baseline.outcomes.successful == 4);
     EXPECT(baseline.outcomes.failed == 5);
     EXPECT(baseline.outcomes.timed_out == 1);
     EXPECT(baseline.latency.average_ms == 20.0);
     EXPECT(baseline.latency.p95_ms == 20.0);
 
-    const incidentlab::GlobalMetrics& retry = by_id(cached(), "retry").metrics.global;
+    const auto retry = by_id(cached(), "retry").metrics.global;
     EXPECT(retry.outcomes.successful == 7);
     EXPECT(retry.retries.total_attempts == 16);
     EXPECT(retry.latency.average_ms == 92.0);
     EXPECT(retry.latency.p50_ms == 140.0);
     EXPECT(retry.latency.p95_ms == 140.0);
 
-    const incidentlab::GlobalMetrics& circuit = by_id(cached(), "circuit").metrics.global;
+    const auto circuit = by_id(cached(), "circuit").metrics.global;
     EXPECT(circuit.outcomes.successful == 3);
     EXPECT(circuit.retries.total_attempts == 9);
     EXPECT(circuit.latency.average_ms == 18.0);
     EXPECT(circuit.latency.p50_ms == 20.0);
 
-    const incidentlab::GlobalMetrics& full = by_id(cached(), "full").metrics.global;
+    const auto full = by_id(cached(), "full").metrics.global;
     EXPECT(full.outcomes.successful == 4);
     EXPECT(full.outcomes.failed == 3);
     EXPECT(full.outcomes.circuit_rejected == 3);
