@@ -9,7 +9,7 @@ namespace incidentlab {
 /// Success and Rejected are normal domain results. Unsupported operations use Rejected.
 /// Failed, TimedOut, and Dropped are injected simulation outcomes, not C++ exceptions.
 /// Invalid request structure throws std::invalid_argument instead.
-enum class ServiceStatus { Success, Rejected, Failed, TimedOut, Dropped };
+enum class ServiceStatus { Success, Rejected, Failed, TimedOut, Dropped, CircuitRejected };
 
 struct ServiceResult {
     ServiceStatus status = ServiceStatus::Rejected;
@@ -28,6 +28,8 @@ inline const char* to_string(ServiceStatus status) noexcept {
         return "TIMED OUT";
     case ServiceStatus::Dropped:
         return "DROPPED";
+    case ServiceStatus::CircuitRejected:
+        return "CIRCUIT REJECTED";
     }
     return "REJECTED";
 }

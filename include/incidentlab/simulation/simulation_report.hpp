@@ -2,6 +2,7 @@
 
 #include "incidentlab/event_history.hpp"
 #include "incidentlab/service_result.hpp"
+#include "incidentlab/simulation/dead_letter_queue.hpp"
 #include "incidentlab/simulation/simulation_clock.hpp"
 
 #include <cstddef>
@@ -12,8 +13,8 @@ namespace incidentlab {
 
 /// One request the engine has finished, in the order the terminal outcomes were recorded.
 ///
-/// simulation_time is the virtual time of that outcome. start_time is when the request began.
-/// They are equal when the outcome is recorded at the start.
+/// simulation_time is the virtual time of the final outcome. start_time is when the logical
+/// request first started. They are equal when the outcome is recorded at that start.
 struct ExecutionRecord {
     SimulationClock::Time simulation_time = 0;
     std::string request_id;
@@ -38,9 +39,14 @@ struct SimulationReport {
     std::size_t failed_requests = 0;
     std::size_t timed_out_requests = 0;
     std::size_t dropped_requests = 0;
+    std::size_t circuit_rejected_requests = 0;
+    std::size_t total_attempts = 0;
+    std::size_t retry_attempts = 0;
+    std::size_t dead_lettered_requests = 0;
     EventHistory history;
     std::vector<SimulationClock::Time> event_times;
     std::vector<ExecutionRecord> executions;
+    std::vector<DeadLetterEntry> dead_letters;
 };
 
 }  // namespace incidentlab

@@ -4,7 +4,7 @@ IncidentLab is a distributed systems failure simulator for learning how a small 
 
 The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 4 of 10 is implemented.** The program prints the Stage 1 banner, then runs a deterministic failure-injection scenario. Retries, circuit breakers, and the window are not in the build yet.
+**Stage 5 of 10 is implemented.** The program prints the Stage 1 banner, then runs retry, circuit breaker, and dead-letter scenarios. Metrics and the window are not in the build yet.
 
 ## Implemented features
 
@@ -16,15 +16,16 @@ The whole system runs in one process. Services are models. Nothing is deployed, 
 - A discrete-event engine: `SimulationClock`, `EventScheduler`, `SimulationEngine`
 - A Stage 3 demonstration, `run_stage3_demo()`, kept for the original simulation tests
 - Deterministic failure injection: service failure, slow response, timeout, and dropped request
-- A Stage 4 console demonstration: Inventory finishes while Payment is still heading for a timeout
-- Automated tests for the domain model, the simulation, and failure injection
+- A Stage 4 demonstration, `run_stage4_demo()`, kept for the failure-injection tests
+- Retry with virtual-time backoff, a per-service circuit breaker, and an in-memory dead-letter queue
+- A Stage 5 console demonstration of those three patterns
+- Automated tests for the domain model, the simulation, failure injection, and resilience
 
 ## Planned features
 
 These are not in the build yet.
 
 - A simulated API gateway, event queue, and databases
-- Retries, circuit breakers, and a dead-letter queue
 - Health and metrics
 - Side-by-side comparison of resilience strategies
 - An interactive architecture view (raylib)
@@ -58,7 +59,19 @@ With no failure configuration, a request is received and completed at its schedu
 
 `configure_failure("PaymentService", FailureConfig{FailureType::Timeout, 200, 100, 1})` times out every Payment request. The request starts at its scheduled time and times out 100 ms later, not 200 ms later. `every_nth_request` of 3 fails the 3rd, 6th, and so on. Each service has its own counter. Setting the policy again resets that counter. `FailureType::None` removes it.
 
-The console calls `run_stage4_demo()`. Order runs at 10 ms, Payment starts at 30 ms and times out at 130 ms, and Inventory runs at 50 ms. Inventory finishes first. `run_stage3_demo()` and `run_stage2_demo()` remain in the library.
+The console calls `run_stage5_demo()`. `run_stage4_demo()`, `run_stage3_demo()`, and `run_stage2_demo()` remain in the library.
+
+## Resilience
+
+Retry, the circuit breaker, and the dead-letter queue are optional. A service with none of them still behaves as it did in Stage 4.
+
+`configure_retry("PaymentService", RetryConfig{3, 100, 2.0})` allows three attempts. The first retry waits 100 ms of virtual time. The next waits 200 ms. There is no jitter and no `sleep()`. `Failed`, `TimedOut`, and `Dropped` are retried. `Rejected` is not. An unexpected C++ exception is not turned into a retry.
+
+`configure_circuit_breaker("PaymentService", CircuitBreakerConfig{3, 500})` opens the circuit after three consecutive failures. While it is open, new attempts are blocked and do not call `handle()`. After 500 ms, one half-open probe is allowed. A successful probe closes the circuit. A failed probe opens it again. A request that was already running when the circuit opened is allowed to finish, and that late outcome does not change the breaker.
+
+The dead-letter queue stores a logical request when its failure is final and that service has a retry policy or a circuit breaker. Successful and rejected requests are not stored. The queue is not replayed and is not written to disk.
+
+A logical request has one final result. Retries are extra attempts, not extra logical requests. `processed_requests` counts final outcomes. `total_attempts` counts starts that were allowed to reach the service.
 
 ## Domain model
 
@@ -76,7 +89,7 @@ A `Request` is one call. It carries `request_id`, `trace_id`, `source_service`, 
 
 Any other operation returns `ServiceStatus::Rejected`. That is a normal result, not an exception.
 
-`Event` records one fact about a request: an id, the request id, the trace id, the service name, a type, and a message. The types are `RequestReceived`, `RequestCompleted`, `RequestRejected`, `RequestFailed`, `RequestTimedOut`, and `RequestDropped`. `EventHistory` stores events in insertion order and can filter them. The demonstration is a fixed script in `run_stage2_demo()`. It is not the scheduler. Stage 3 replaces that script.
+`Event` records one fact about a request: an id, the request id, the trace id, the service name, a type, and a message. The types include `RequestReceived`, `RequestCompleted`, `RequestRejected`, `RequestFailed`, `RequestTimedOut`, `RequestDropped`, plus retry, circuit, and dead-letter events when those features are used. `EventHistory` stores events in insertion order and can filter them. The demonstration is a fixed script in `run_stage2_demo()`. It is not the scheduler. Stage 3 replaces that script.
 
 Details and the class diagram are in [docs/architecture.md](docs/architecture.md).
 
@@ -91,7 +104,7 @@ flowchart LR
     end
 
     subgraph core [incidentlab_core]
-        Demo["Stage 4 demo"]
+        Demo["Stage 5 demo"]
         Engine["Simulation engine"]
         Domain["Services, requests, events"]
     end
@@ -179,7 +192,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, and `tests/failure_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
+`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, `tests/failure_tests.cpp`, and `tests/resilience_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
 
 ## Run
 
@@ -205,38 +218,47 @@ Version 0.1.0
 
 Status: Application initialized successfully.
 
-========== STAGE 4 FAILURE INJECTION ==========
+========== STAGE 5 RESILIENCE PATTERNS ==========
 
-[10 ms] REQ-001 -> OrderService
-Status: SUCCESS
+SCENARIO A: RETRY
 
-[30 ms] REQ-002 -> PaymentService
-Status: PROCESSING
+[10 ms] PaymentService REQ-PAY - Attempt 1: FAILED
+[10 ms] Retry scheduled in 100 ms
+[110 ms] PaymentService REQ-PAY - Attempt 2: FAILED
+[110 ms] Retry scheduled in 200 ms
+[310 ms] PaymentService REQ-PAY - Attempt 3: SUCCESS
 
-[50 ms] REQ-003 -> InventoryService
-Status: SUCCESS
+SCENARIO B: CIRCUIT BREAKER
 
-[130 ms] REQ-002 -> PaymentService
-Status: TIMED OUT
+[10 ms] PaymentService REQ-C1 - Attempt 1: FAILED
+[20 ms] PaymentService REQ-C2 - Attempt 1: FAILED
+[30 ms] PaymentService REQ-C3 - Attempt 1: FAILED
+[30 ms] Circuit State: OPEN
+[40 ms] PaymentService REQ-C4 - Attempt 1: BLOCKED
+[530 ms] Circuit State: HALF_OPEN
+[530 ms] PaymentService REQ-C5 - Attempt 1: SUCCESS
+[530 ms] Circuit State: CLOSED
 
-========== SIMULATION REPORT ==========
+SCENARIO C: DEAD-LETTER QUEUE
 
-Trace: TRACE-001
+[10 ms] InventoryService REQ-INV - Attempt 1: FAILED
+[110 ms] InventoryService REQ-INV - Attempt 2: FAILED
+[310 ms] InventoryService REQ-INV - Attempt 3: FAILED
+[310 ms] Request moved to DLQ
 
-Processed Requests: 3
-Successful Requests: 2
-Rejected Requests: 0
-Failed Requests: 0
-Timed Out Requests: 1
-Dropped Requests: 0
-Pending Requests: 0
-In Progress Requests: 0
+Request: REQ-INV
+Trace: TRACE-DLQ
+Attempts: 3
+Final Status: FAILED
+Failed At: 310 ms
 
-Total Events: 6
-Final Virtual Time: 130 ms
+Dead-Letter Queue Size: 1
+Final Virtual Time: 310 ms
 
 Simulation completed.
 ```
+
+The real program also prints the counters after each scenario. Scenario A ends at 310 ms with 3 attempts and 2 retries. Scenario B ends at 530 ms. The lines above are the event order, not a second hardcoded result.
 
 The process exits with status 0. If the report cannot be written, it prints an error to standard error and exits with status 1.
 
@@ -256,7 +278,8 @@ The process exits with status 0. If the report cannot be written, it prints an e
 │   ├── test_harness.hpp
 │   ├── domain_tests.cpp
 │   ├── simulation_tests.cpp
-│   └── failure_tests.cpp
+│   ├── failure_tests.cpp
+│   └── resilience_tests.cpp
 ├── docs/architecture.md
 └── README.md
 ```
@@ -267,18 +290,18 @@ The process exits with status 0. If the report cannot be written, it prints an e
 
 | Stage | Focus | Status |
 | --- | --- | --- |
-| 1 | Architecture and project setup | Implemented |
-| 2 | Service and event models | Implemented |
-| 3 | Simulation engine | Implemented |
-| 4 | Failure injection | Implemented |
-| 5 | Resilience patterns | Planned |
+| 1 | Architecture and project setup | Complete |
+| 2 | Service and event models | Complete |
+| 3 | Simulation engine | Complete |
+| 4 | Failure injection | Complete |
+| 5 | Resilience patterns | Implemented |
 | 6 | Metrics and observability | Planned |
 | 7 | Interactive visualization | Planned |
 | 8 | Scenario comparison | Planned |
 | 9 | Extended testing and CI | Planned |
 | 10 | Documentation and portfolio release | Planned |
 
-Stage 5, when approved, adds retries and circuit breakers. Failure injection does not retry a timed-out or failed request.
+Stage 6, when approved, adds metrics. Retries do not jitter, and the dead-letter queue is not replayed.
 
 ## License
 

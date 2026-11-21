@@ -40,7 +40,8 @@ void expect_consistent(const incidentlab::SimulationEngine& engine) {
     EXPECT(report.history.size() == report.event_times.size());
     EXPECT(report.processed_requests == report.executions.size());
     EXPECT(report.successful_requests + report.rejected_requests + report.failed_requests +
-               report.timed_out_requests + report.dropped_requests ==
+               report.timed_out_requests + report.dropped_requests +
+               report.circuit_rejected_requests ==
            report.processed_requests);
 }
 

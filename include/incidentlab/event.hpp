@@ -11,7 +11,13 @@ enum class EventType {
     RequestRejected,
     RequestFailed,
     RequestTimedOut,
-    RequestDropped
+    RequestDropped,
+    RetryScheduled,
+    CircuitOpened,
+    CircuitHalfOpened,
+    CircuitClosed,
+    CircuitRejected,
+    DeadLettered
 };
 
 /// One recorded fact about a request.
@@ -45,6 +51,18 @@ inline const char* to_string(EventType type) noexcept {
         return "RequestTimedOut";
     case EventType::RequestDropped:
         return "RequestDropped";
+    case EventType::RetryScheduled:
+        return "RetryScheduled";
+    case EventType::CircuitOpened:
+        return "CircuitOpened";
+    case EventType::CircuitHalfOpened:
+        return "CircuitHalfOpened";
+    case EventType::CircuitClosed:
+        return "CircuitClosed";
+    case EventType::CircuitRejected:
+        return "CircuitRejected";
+    case EventType::DeadLettered:
+        return "DeadLettered";
     }
     return "RequestRejected";
 }

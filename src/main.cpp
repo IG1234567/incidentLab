@@ -1,9 +1,10 @@
-#include "incidentlab/simulation/stage4_demo.hpp"
+#include "incidentlab/simulation/stage5_demo.hpp"
 #include "incidentlab/version.hpp"
 
 #include <cstddef>
 #include <exception>
 #include <iostream>
+#include <map>
 #include <string>
 
 namespace {
@@ -12,26 +13,14 @@ constexpr const char* kName = "INCIDENTLAB";
 constexpr const char* kTagline = "Distributed Systems Failure Simulator";
 constexpr const char* kStatus = "Status: Application initialized successfully.";
 
-bool terminal_at_same_time(const incidentlab::SimulationReport& report, std::size_t index) {
-    const incidentlab::Event& event = report.history.events()[index];
-    if (event.type != incidentlab::EventType::RequestReceived) {
-        return false;
-    }
-    const auto& events = report.history.events();
-    for (std::size_t later = index + 1; later < events.size(); ++later) {
-        if (events[later].request_id == event.request_id &&
-            report.event_times[later] == report.event_times[index] &&
-            events[later].type != incidentlab::EventType::RequestReceived) {
-            return true;
-        }
-    }
-    return false;
+bool is_attempt_boundary(incidentlab::EventType type) {
+    return type == incidentlab::EventType::RequestReceived ||
+           type == incidentlab::EventType::RequestDropped ||
+           type == incidentlab::EventType::CircuitRejected;
 }
 
-const char* status_line(incidentlab::EventType type) {
+const char* outcome_label(incidentlab::EventType type) {
     switch (type) {
-    case incidentlab::EventType::RequestReceived:
-        return "PROCESSING";
     case incidentlab::EventType::RequestCompleted:
         return "SUCCESS";
     case incidentlab::EventType::RequestRejected:
@@ -42,42 +31,88 @@ const char* status_line(incidentlab::EventType type) {
         return "TIMED OUT";
     case incidentlab::EventType::RequestDropped:
         return "DROPPED";
+    case incidentlab::EventType::CircuitRejected:
+        return "BLOCKED";
+    default:
+        return "UNKNOWN";
     }
-    return "REJECTED";
 }
 
-void print_simulation(std::ostream& out, const incidentlab::SimulationReport& report) {
-    out << "\n========== STAGE 4 FAILURE INJECTION ==========\n\n";
+bool is_outcome(incidentlab::EventType type) {
+    return type == incidentlab::EventType::RequestCompleted ||
+           type == incidentlab::EventType::RequestRejected ||
+           type == incidentlab::EventType::RequestFailed ||
+           type == incidentlab::EventType::RequestTimedOut ||
+           type == incidentlab::EventType::RequestDropped ||
+           type == incidentlab::EventType::CircuitRejected;
+}
 
+void print_trace(std::ostream& out, const incidentlab::SimulationReport& report) {
+    std::map<std::string, std::size_t> attempts;
     const auto& events = report.history.events();
     for (std::size_t index = 0; index < events.size(); ++index) {
-        if (terminal_at_same_time(report, index)) {
+        const incidentlab::Event& event = events[index];
+        const auto time = report.event_times[index];
+        if (is_attempt_boundary(event.type)) {
+            ++attempts[event.request_id];
+        }
+        if (event.type == incidentlab::EventType::RequestReceived) {
             continue;
         }
-        out << "[" << report.event_times[index] << " ms] " << events[index].request_id << " -> "
-            << events[index].service_name << '\n'
-            << "Status: " << status_line(events[index].type) << "\n\n";
+        if (is_outcome(event.type)) {
+            out << "[" << time << " ms] " << event.service_name << " " << event.request_id
+                << " - Attempt " << attempts[event.request_id] << ": " << outcome_label(event.type)
+                << '\n';
+            continue;
+        }
+        if (event.type == incidentlab::EventType::RetryScheduled) {
+            out << "[" << time << " ms] " << event.message << '\n';
+            continue;
+        }
+        if (event.type == incidentlab::EventType::CircuitOpened) {
+            out << "[" << time << " ms] Circuit State: OPEN\n";
+            continue;
+        }
+        if (event.type == incidentlab::EventType::CircuitHalfOpened) {
+            out << "[" << time << " ms] Circuit State: HALF_OPEN\n";
+            continue;
+        }
+        if (event.type == incidentlab::EventType::CircuitClosed) {
+            out << "[" << time << " ms] Circuit State: CLOSED\n";
+            continue;
+        }
+        if (event.type == incidentlab::EventType::DeadLettered) {
+            out << "[" << time << " ms] Request moved to DLQ\n";
+        }
     }
+}
 
-    const std::string trace = events.empty() ? "" : events.front().trace_id;
-    out << "========== SIMULATION REPORT ==========\n\n";
-    out << "Trace: " << trace << "\n\n";
-    out << "Processed Requests: " << report.processed_requests << '\n';
-    out << "Successful Requests: " << report.successful_requests << '\n';
-    out << "Rejected Requests: " << report.rejected_requests << '\n';
-    out << "Failed Requests: " << report.failed_requests << '\n';
-    out << "Timed Out Requests: " << report.timed_out_requests << '\n';
-    out << "Dropped Requests: " << report.dropped_requests << '\n';
-    out << "Pending Requests: " << report.pending_requests << '\n';
-    out << "In Progress Requests: " << report.in_progress_requests << "\n\n";
-    out << "Total Events: " << report.history.size() << '\n';
-    out << "Final Virtual Time: " << report.current_time << " ms\n\n";
-    out << "Simulation completed.\n";
+void print_summary(std::ostream& out, const incidentlab::SimulationReport& report) {
+    out << "\nProcessed Logical Requests: " << report.processed_requests << '\n';
+    out << "Successful Logical Requests: " << report.successful_requests << '\n';
+    out << "Failed Logical Requests: " << report.failed_requests << '\n';
+    out << "Timed Out Logical Requests: " << report.timed_out_requests << '\n';
+    out << "Dropped Logical Requests: " << report.dropped_requests << '\n';
+    out << "Circuit Rejections: " << report.circuit_rejected_requests << '\n';
+    out << "Total Attempts: " << report.total_attempts << '\n';
+    out << "Retry Attempts: " << report.retry_attempts << '\n';
+    out << "Dead-Letter Queue Size: " << report.dead_lettered_requests << '\n';
+    out << "Final Virtual Time: " << report.current_time << " ms\n";
+}
+
+void print_dead_letters(std::ostream& out, const incidentlab::SimulationReport& report) {
+    for (const incidentlab::DeadLetterEntry& entry : report.dead_letters) {
+        out << "\nRequest: " << entry.request.request_id << '\n';
+        out << "Trace: " << entry.request.trace_id << '\n';
+        out << "Attempts: " << entry.attempts << '\n';
+        out << "Final Status: " << incidentlab::to_string(entry.final_status) << '\n';
+        out << "Failed At: " << entry.failed_at_ms << " ms\n";
+        out << "Reason: " << entry.reason << '\n';
+    }
 }
 
 }  // namespace
 
-// Console presentation only. Domain decisions stay in incidentlab_core.
 int main() {
     std::cout << kName << '\n'
               << kTagline << '\n'
@@ -85,9 +120,23 @@ int main() {
               << kStatus << '\n';
 
     try {
-        print_simulation(std::cout, incidentlab::run_stage4_demo());
+        const incidentlab::Stage5Demo demo = incidentlab::run_stage5_demo();
+        std::cout << "\n========== STAGE 5 RESILIENCE PATTERNS ==========\n\n";
+        std::cout << "SCENARIO A: RETRY\n\n";
+        print_trace(std::cout, demo.retry);
+        print_summary(std::cout, demo.retry);
+
+        std::cout << "\nSCENARIO B: CIRCUIT BREAKER\n\n";
+        print_trace(std::cout, demo.circuit_breaker);
+        print_summary(std::cout, demo.circuit_breaker);
+
+        std::cout << "\nSCENARIO C: DEAD-LETTER QUEUE\n\n";
+        print_trace(std::cout, demo.dead_letter);
+        print_dead_letters(std::cout, demo.dead_letter);
+        print_summary(std::cout, demo.dead_letter);
+        std::cout << "\nSimulation completed.\n";
     } catch (const std::exception& ex) {
-        std::cerr << "IncidentLab: stage 4 simulation failed: " << ex.what() << '\n';
+        std::cerr << "IncidentLab: stage 5 simulation failed: " << ex.what() << '\n';
         return 1;
     }
 
@@ -95,6 +144,5 @@ int main() {
         std::cerr << "IncidentLab: failed to write the startup message.\n";
         return 1;
     }
-
     return 0;
 }

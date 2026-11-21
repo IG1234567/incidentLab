@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Retries are still Stage 5.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Metrics are still Stage 6.
 
 ## What exists now
 
@@ -29,7 +29,7 @@ flowchart LR
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
-| `incidentlab` | Print the startup banner and the Stage 4 report. | `incidentlab::core` |
+| `incidentlab` | Print the startup banner and the Stage 5 report. | `incidentlab::core` |
 | `incidentlab_core` | Version, domain types, the Stage 2 script, and the simulation engine. | C++ standard library only |
 | `incidentlab_tests` | Assert the domain rules and the simulation. | `incidentlab::core` |
 
@@ -200,7 +200,31 @@ flowchart TB
 
 `scheduled_time` is when the start runs. `completion_time` is the start plus the delay, or plus the timeout threshold. The clock advances to the action being committed and never moves backward. At one timestamp, the smaller sequence number runs first. A finish is numbered when the start is committed, so an action already queued at that time runs before it.
 
-`pending_requests` are starts that have not run. `in_progress_requests` have started and are waiting for a finish. `processed_requests` counts only terminal outcomes: successful + rejected + failed + timed out + dropped. An in-progress request is none of those.
+`pending_requests` are starts that have not run. `in_progress_requests` have started and are waiting for a finish. `processed_requests` counts only final logical outcomes: successful + rejected + failed + timed out + dropped + circuit rejected. An in-progress request is none of those. A retry is another attempt of the same logical request, not a second processed request.
+
+## Resilience
+
+```mermaid
+flowchart TB
+    Start["Scheduled attempt"] --> Breaker["Circuit breaker"]
+    Breaker -->|open| Block["CircuitRejected"]
+    Breaker -->|closed or probe| Inject["Failure injection"]
+    Inject --> Handle["Service::handle"]
+    Handle --> Outcome["Attempt outcome"]
+    Outcome -->|retry allowed| Queue["EventScheduler"]
+    Queue --> Start
+    Outcome -->|attempts exhausted or circuit open| Dlq["Dead-letter queue"]
+    Outcome -->|success or rejected| Done["Final logical result"]
+    Block --> Dlq
+```
+
+Retry configuration lives on the engine, keyed by service name. The delay before retry number `n` is `initial_delay_ms * multiplier^(n - 1)`. The scheduler receives that retry as a normal start action. Virtual time does not move backward, and the delay is rejected when it does not fit in the clock.
+
+The breaker has three states. Closed counts consecutive `Failed`, `TimedOut`, and `Dropped` outcomes. `Rejected` does not count. Open blocks later attempts until `reset_timeout_ms` has passed, then one probe moves it to half-open. Other attempts wait while that probe is still in flight. The probe's result is applied when it is known: success closes the circuit, failure opens it again and restarts the timeout.
+
+An attempt that started before the circuit opened still finishes. If the circuit is already open when that attempt's result arrives, the result does not open, close, or reset the breaker. Only a failure or success that finishes while the circuit is still closed, and the half-open probe, change it.
+
+The dead-letter queue is used only when that service has a retry policy with at least two attempts, or a circuit breaker. A final `Failed`, `TimedOut`, `Dropped`, or `CircuitRejected` outcome is stored once, with the original request, the trace id, the number of attempts that reached the service, the virtual time, and the reason. Stage 4 runs do not write the queue. Nothing reads it back into the scheduler.
 
 ## How later stages plug in
 
@@ -236,10 +260,10 @@ flowchart TB
 
 | Stage | Where it will land | Role |
 | --- | --- | --- |
-| 2 | `include/incidentlab/`, `src/`, `tests/` | Requests, services, events, history, and the fixed demo. Present now. |
-| 3 | `include/incidentlab/simulation/`, `src/simulation/` | Virtual clock, scheduler, and engine. Present now. |
-| 4 | `FailureConfig` inside `SimulationEngine` | Deterministic failure injection. Present now. |
-| 5 | strategies composed into callers | Retry and circuit breaker. |
+| 2 | `include/incidentlab/`, `src/`, `tests/` | Requests, services, events, history, and the fixed demo. Complete. |
+| 3 | `include/incidentlab/simulation/`, `src/simulation/` | Virtual clock, scheduler, and engine. Complete. |
+| 4 | `FailureConfig` inside `SimulationEngine` | Deterministic failure injection. Complete. |
+| 5 | Retry, `CircuitBreaker`, and `DeadLetterQueue` inside `SimulationEngine` | Resilience patterns. Implemented. |
 | 6 | metrics the engine records | Counters and health. The UI only reads them. |
 | 7 | a separate `incidentlab_viz` target | raylib. It links `incidentlab::core` and contains no simulation rules. |
 | 8 | scenario definitions | The same workload under two strategies. |

@@ -41,9 +41,12 @@ add_library(incidentlab_core STATIC
     src/stage2_demo.cpp
     src/simulation/simulation_clock.cpp
     src/simulation/event_scheduler.cpp
+    src/simulation/circuit_breaker.cpp
+    src/simulation/dead_letter_queue.cpp
     src/simulation/simulation_engine.cpp
     src/simulation/stage3_demo.cpp
     src/simulation/stage4_demo.cpp
+    src/simulation/stage5_demo.cpp
 )
 add_library(incidentlab::core ALIAS incidentlab_core)
 
@@ -79,6 +82,7 @@ add_executable(incidentlab_tests
     tests/domain_tests.cpp
     tests/simulation_tests.cpp
     tests/failure_tests.cpp
+    tests/resilience_tests.cpp
 )
 target_link_libraries(incidentlab_tests PRIVATE incidentlab::core)
 target_include_directories(incidentlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
