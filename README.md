@@ -1,335 +1,66 @@
 # IncidentLab
+### Distributed Systems Failure Simulator
 
-IncidentLab is a distributed systems failure simulator for learning how a small microservice architecture behaves when calls time out, retries stack up, and circuit breakers open.
+IncidentLab is a deterministic C++17 simulator for exploring how a small set of services behaves when calls fail, and how retry, a circuit breaker, and a dead-letter queue change the outcome. The simulation uses virtual time. It does not open sockets, deploy services, or depend on a cloud provider.
 
-The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
+The same engine drives a console report, an optional raylib dashboard, and a comparison of four resilience strategies. Automated tests and GitHub Actions check the headless build.
 
-**Stage 9 of 10 is implemented and waiting for review.** The console still prints the Stage 6 metrics report. `./incidentlab --compare` prints the scenario comparison. An optional raylib window can play the Stage 7 scenario or show the comparison. The core library does not depend on raylib, and the Debug and Release presets do not build the window. Stage 8 remains implemented and waiting for review. The GitHub Actions workflow is in the repository; a green run is recorded only after GitHub executes it.
+![Live dashboard after the first completed request](docs/screenshots/incidentlab-dashboard.png)
 
-## Implemented features
+## Key features
 
-- C++17 CMake build with a core library, a console executable, and a CTest target
-- Debug and Release configurations, without assuming a particular compiler
-- One version number, owned by the build and reported at startup
-- Domain model: `Request`, `Service`, `OrderService`, `PaymentService`, `InventoryService`, `ServiceResult`, `Event`, `EventHistory`
-- A fixed Stage 2 script, `run_stage2_demo()`, kept for the original domain tests
-- A discrete-event engine: `SimulationClock`, `EventScheduler`, `SimulationEngine`
-- A Stage 3 demonstration, `run_stage3_demo()`, kept for the original simulation tests
-- Deterministic failure injection: service failure, slow response, timeout, and dropped request
-- A Stage 4 demonstration, `run_stage4_demo()`, kept for the failure-injection tests
-- Retry with virtual-time backoff, a per-service circuit breaker, and an in-memory dead-letter queue
-- A Stage 5 console demonstration of those three patterns, kept in the library
-- Metrics calculated from the simulation report: rates, latency, throughput, retries, circuit breakers, and the dead-letter queue
-- An incident timeline built from the event history
-- A Stage 6 console demonstration
-- A visualization snapshot and a simulation controller that play one deterministic scenario
-- An optional `incidentlab_gui` window, built only when raylib is already installed and `INCIDENTLAB_BUILD_GUI` is ON
-- Automated tests for the domain model, the simulation, failure injection, resilience, observability, the visualization controller, and scenario comparison
-- Four predefined scenarios on one shared workload: Baseline, Retry Only, Circuit Breaker, and Full Resilience
-- CTest suites for the existing cases, plus quality tests for accounting, lifetimes, and boundaries
-- Optional AddressSanitizer and UndefinedBehaviorSanitizer builds
-- Optional GCC/Clang line and function coverage, summarized without gcovr
-- A GitHub Actions workflow for Debug, Release, Clang, sanitizers, and coverage
-
-## Planned features
-
-These are not in the build yet.
-
-- A simulated API gateway, event queue, and databases
-- Stage 10 release notes and a chosen license
-
-The interactive window is optional and requires a local raylib install. It is not part of the default presets.
-
-## Technology stack
-
-| Now | Later |
-| --- | --- |
-| C++17, CMake, CTest, the C++ standard library | Stage 10 release notes and a license |
-| Git and GitHub Actions |  |
-| raylib, only for the optional GUI |  |
-| GCC/Clang sanitizers and `gcov`, only when those options are enabled |  |
-
-The tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window and without GitHub.
-
-## Discrete-event simulation
-
-A discrete-event simulation does not step through every millisecond. It keeps a list of future requests and jumps the clock to the time of the next one. Nothing waits. `sleep()` is not used, because virtual time and wall-clock time are different things. A request scheduled 50 ms later runs on the next loop iteration.
-
-`SimulationClock` stores that virtual time in milliseconds. It starts at 0. `advance_to` moves it forward. A smaller value throws `std::invalid_argument`.
-
-`EventScheduler` stores requests that have not run yet. `std::priority_queue` returns the earliest time first. When two requests share a time, the one scheduled first runs first. Scheduling and removal are O(log N). Looking up a service by name in `std::unordered_map` is O(1) on average. Running N queued requests is O(N log N).
-
-`SimulationEngine` owns the clock, the scheduler, and one `EventHistory`. `register_service` keeps a non-owning pointer, so the service object must outlive the engine. A request is routed by `target_service`. The call goes through `Service::handle`, so the engine does not switch on the concrete class. An unknown name becomes `ServiceStatus::Rejected` and a `RequestRejected` event. The simulation continues.
-
-`ScheduledEvent` means "run this request later." `Event` means "this already happened." They are different types. Virtual time is stored beside the history, in `SimulationReport::event_times`, at the same index as `history.events()`. The history itself is unchanged from Stage 2.
-
-`run_next(n)` finishes at most n requests. `run_next(0)` does nothing. `run()` drains every queued start and finish. If a service throws, that start stays queued, nothing new is recorded for it, and the exception is not swallowed. A simulated failure is a normal outcome. It does not throw. `run_next` is not one scheduler action. `step_once()` runs one Start or one Finish and returns false when the queue is empty. The window's Step control uses `step_once()`. It does not change `run_next()`.
-
-With no failure configuration, a request is received and completed at its scheduled time. A slow response, a delayed failure, or a timeout leaves a finish action on the same queue, so other requests can run before that outcome. The clock never moves backward. Virtual delays do not sleep.
-
-`configure_failure("PaymentService", FailureConfig{FailureType::Timeout, 200, 100, 1})` times out every Payment request. The request starts at its scheduled time and times out 100 ms later, not 200 ms later. `every_nth_request` of 3 fails the 3rd, 6th, and so on. Each service has its own counter. Setting the policy again resets that counter. `FailureType::None` removes it.
-
-The console calls `run_stage6_demo()`. `run_stage5_demo()`, `run_stage4_demo()`, `run_stage3_demo()`, and `run_stage2_demo()` remain in the library.
-
-## Resilience
-
-Retry, the circuit breaker, and the dead-letter queue are optional. A service with none of them still behaves as it did in Stage 4.
-
-`configure_retry("PaymentService", RetryConfig{3, 100, 2.0})` allows three attempts. The first retry waits 100 ms of virtual time. The next waits 200 ms. There is no jitter and no `sleep()`. `Failed`, `TimedOut`, and `Dropped` are retried. `Rejected` is not. An unexpected C++ exception is not turned into a retry.
-
-`configure_circuit_breaker("PaymentService", CircuitBreakerConfig{3, 500})` opens the circuit after three consecutive failures. While it is open, new attempts are blocked and do not call `handle()`. After 500 ms, one half-open probe is allowed. A successful probe closes the circuit. A failed probe opens it again. A request that was already running when the circuit opened is allowed to finish, and that late outcome does not change the breaker.
-
-The dead-letter queue stores a logical request when its failure is final and that service has a retry policy or a circuit breaker. Successful and rejected requests are not stored. The queue is not replayed and is not written to disk.
-
-A logical request has one final result. Retries are extra attempts, not extra logical requests. `processed_requests` counts final outcomes. `total_attempts` counts starts that were allowed to reach the service.
-
-## Metrics
-
-`MetricsCalculator::calculate` reads a `SimulationReport` and returns an `ObservabilityReport`. It does not change the report, the engine, or the history. The console only formats that snapshot.
-
-Rates use completed logical requests. A request that fails and then succeeds is one success. Pending and in-progress requests are not completed. `Rejected`, `Failed`, `TimedOut`, `Dropped`, and `CircuitRejected` stay separate, and every one of them counts as unsuccessful. With no completed requests, both rates are 0%. That is an empty sample, not a measured success rate.
-
-Logical latency is the final completion time minus the original start time. It includes slow responses, timeout waits, and retry backoff. It does not include time before the first start. Percentiles use nearest-rank: `rank = ceil(percentile × count)`, then the value at `rank - 1` in the sorted sample. The implementation uses the integer form of 50/100, 95/100, and 99/100. An empty sample reports 0 ms for every latency field.
-
-Throughput is completed requests per virtual second. The window starts at the earliest original start and ends at the latest completion, using completed requests only. One virtual second is 1000 ms. If nothing completed, or every completion shares that start time, throughput is unavailable rather than infinite.
-
-A request requires a retry when the history contains `RetryScheduled` for its id. Recovered means that request's final status is success. Exhausted means the failure used the last attempt allowed by its retry policy. A dead-letter entry is not assumed to be exhausted: a circuit block is dead-lettered without being an exhausted retry.
-
-Circuit openings count `CircuitOpened` events, not later blocked requests. The final state comes from the breaker snapshot on the report. The timeline copies history order, including equal timestamps, and can be filtered by service, request id, or trace id.
-
-## Domain model
-
-A `Request` is one call. It carries `request_id`, `trace_id`, `source_service`, `target_service`, and `operation`. Construction throws `std::invalid_argument` when the request id, trace id, target service, or operation is empty. The source service may be empty.
-
-`request_id` names that single call. `trace_id` names the workflow the call belongs to. In the demonstration, `REQ-001`, `REQ-002`, and `REQ-003` all use `TRACE-001`. Filtering the history by `TRACE-001` returns every event from the workflow. Filtering by `REQ-002` returns only that call's events.
-
-`Service` is an abstract base with `name()` and `handle()`. The three concrete services inherit from it:
-
-| Service | Operation | Success text |
-| --- | --- | --- |
-| `OrderService` | `CreateOrder` | `Order created successfully` |
-| `PaymentService` | `ProcessPayment` | `Payment processed successfully` |
-| `InventoryService` | `ReserveInventory` | `Inventory reserved successfully` |
-
-Any other operation returns `ServiceStatus::Rejected`. That is a normal result, not an exception.
-
-`Event` records one fact about a request: an id, the request id, the trace id, the service name, a type, and a message. The types include `RequestReceived`, `RequestCompleted`, `RequestRejected`, `RequestFailed`, `RequestTimedOut`, `RequestDropped`, plus retry, circuit, and dead-letter events when those features are used. `EventHistory` stores events in insertion order and can filter them. The demonstration is a fixed script in `run_stage2_demo()`. It is not the scheduler. Stage 3 replaces that script.
-
-Details and the class diagram are in [docs/architecture.md](docs/architecture.md).
+- Discrete-event simulation on a virtual clock
+- Service, request, and event models, with `Service::handle` as the call boundary
+- Failure injection: service failure, slow response, timeout, and dropped request
+- Retry with exponential backoff, a per-service circuit breaker, and an in-memory dead-letter queue
+- Metrics: rates, latency percentiles, throughput, retries, circuit activity, and an incident timeline
+- Optional raylib dashboard for playback, topology, metrics, and the timeline
+- Comparison of Baseline, Retry Only, Circuit Breaker, and Full Resilience on one workload
+- CTest suites, AddressSanitizer, UndefinedBehaviorSanitizer, `gcov` coverage, and GitHub Actions
 
 ## Architecture
 
-Presentation depends on the core library. The library does not know how it is displayed.
+`incidentlab_core` owns the model and the engine. The console and the window only present results. Tests call the core directly and do not open a window.
 
 ```mermaid
-flowchart LR
-    subgraph presentation [Presentation]
-        App["incidentlab executable"]
-        Gui["incidentlab_gui optional"]
-    end
-
-    subgraph core [incidentlab_core]
-        Demo["Stage 6 demo"]
-        Controller["Simulation controller"]
-        Metrics["Metrics calculator"]
-        Engine["Simulation engine"]
-        Domain["Services, requests, events"]
-    end
-
-    Tests["incidentlab_tests"]
-
-    App --> Demo
-    Gui --> Controller
-    Controller --> Engine
-    Controller --> Metrics
-    Demo --> Metrics
-    Metrics --> Engine
-    Engine --> Domain
-    Tests --> Engine
-    Tests --> Controller
+flowchart TD
+    Config[Scenario configuration] --> Runner[Scenario runner]
+    Runner --> Engine[Simulation engine]
+    Engine --> Services[Service models]
+    Engine --> Failures[Failure injection]
+    Engine --> Resilience[Retry, circuit breaker, DLQ]
+    Engine --> History[Event history]
+    History --> Metrics[Metrics calculator]
+    Metrics --> Report[Observability report]
+    Report --> Console[Console]
+    Report --> Gui[raylib dashboard]
+    Runner --> Comparison[Comparison report]
+    Comparison --> Gui
+    Controller[Simulation controller] --> Engine
+    Controller --> Gui
 ```
 
-## Requirements
+The engine stores non-owning `Service` pointers. The caller keeps the service objects alive. A fuller account is in [docs/architecture.md](docs/architecture.md). The object-oriented design is in [docs/oop-design.md](docs/oop-design.md).
 
-- CMake 3.20 or newer
-- A C++17 compiler: Visual Studio (MSVC), GCC, or Clang
-- Git
+## Quick start
 
-CMake finds the compiler on your `PATH`. The project does not pin one.
+These commands were run on Ubuntu 24.04 with GCC 13.3. CMake 3.20 or newer and a C++17 compiler are required. The default presets do not need raylib.
 
-If Windows reports that no compiler was found:
-
-1. Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and select the **Desktop development with C++** workload. That workload includes MSVC and CMake.
-2. Or install [CMake](https://cmake.org/download/) yourself and use an existing GCC or Clang (for example the LLVM installer, or MinGW from MSYS2).
-
-In VS Code, the CMake Tools extension can configure the presets in `CMakePresets.json`.
-
-## Build
-
-Run these commands from the repository root.
-
-### Debug and Release with presets
-
-Single-config generators (Ninja, Makefiles, MinGW) use the preset's build type. Multi-config generators (Visual Studio) use the preset's configuration.
+The public GitHub repository that ran the workflow below is [IG1234567/incidentLab](https://github.com/IG1234567/incidentLab).
 
 ```bash
+git clone https://github.com/IG1234567/incidentLab.git
+cd incidentLab
+
 cmake --preset debug
 cmake --build --preset debug
-
-cmake --preset release
-cmake --build --preset release
-```
-
-### Without presets
-
-Single-config generator:
-
-```bash
-cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/debug
-
-cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release
-```
-
-Visual Studio on Windows (one build tree, two configurations):
-
-```bat
-cmake -S . -B build
-cmake --build build --config Debug
-cmake --build build --config Release
-```
-
-To choose a compiler explicitly:
-
-```bash
-cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
-```
-
-In-source builds (`cmake .` in the repository root) are rejected. Always pass a separate build directory with `-B`.
-
-## Test
-
-The domain tests are registered with CTest. From the repository root, after a build:
-
-```bash
 ctest --test-dir build/debug --output-on-failure
-ctest --test-dir build/release --output-on-failure
-```
 
-Visual Studio multi-config:
-
-```bat
-ctest --test-dir build -C Debug --output-on-failure
-ctest --test-dir build -C Release --output-on-failure
-```
-
-`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, `tests/failure_tests.cpp`, `tests/resilience_tests.cpp`, `tests/observability_tests.cpp`, `tests/visualization_tests.cpp`, and `tests/scenario_comparison_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1. The visualization and comparison tests do not open a window and do not link raylib.
-
-## Run
-
-Single-config preset (Ninja, Makefiles, or MinGW):
-
-```bash
 ./build/debug/incidentlab
 ./build/debug/incidentlab --compare
 ```
 
-On Windows that file is `build\debug\incidentlab.exe`.
-
-Visual Studio is multi-config, so the configuration name is an extra directory:
-
-- preset build: `build\debug\Debug\incidentlab.exe`
-- `cmake -S . -B build` then `--config Debug`: `build\Debug\incidentlab.exe`
-
-Expected output starts like this. The executable also prints every service, every dead-letter row, and the full timeline.
-
-```text
-INCIDENTLAB
-Distributed Systems Failure Simulator
-Version 0.1.0
-
-Status: Application initialized successfully.
-
-========== STAGE 6 METRICS & OBSERVABILITY ==========
-
-GLOBAL METRICS
-
-Completed Requests: 8
-Successful Requests: 4
-Failed Requests: 3
-Circuit Rejections: 1
-
-Success Rate: 50.00%
-Failure Rate: 50.00%
-
-Total Attempts: 9
-Retry Attempts: 2
-Recovered After Retry: 1
-Exhausted Retries: 1
-
-Average Latency: 25.00 ms
-P50 Latency: 0.00 ms
-P95 Latency: 100.00 ms
-P99 Latency: 100.00 ms
-
-Observation Window: 0 ms to 1000 ms
-Throughput: 8.00 requests/second
-
-INCIDENT TIMELINE
-
-[0 ms] OrderService | REQ-O1 | TRACE-STAGE6 | RequestReceived
-[10 ms] PaymentService | REQ-P1 | TRACE-STAGE6 | RequestFailed
-[40 ms] InventoryService | REQ-I1 | TRACE-STAGE6 | RetryScheduled
-[140 ms] InventoryService | REQ-I1 | TRACE-STAGE6 | RequestCompleted
-[300 ms] InventoryService | REQ-I2 | TRACE-STAGE6 | DeadLettered
-[1000 ms] PaymentService | REQ-P4 | TRACE-STAGE6 | CircuitHalfOpened
-[1000 ms] PaymentService | REQ-P4 | TRACE-STAGE6 | CircuitClosed
-
-========== END OF REPORT ==========
-```
-
-Those values come from the engine. They are not printed from a fixed table. The process exits with status 0. If the report cannot be written, it prints an error to standard error and exits with status 1.
-
-## Interactive visualization
-
-The window is a view of `SimulationEngine`. It does not schedule its own outcomes, and frame time never becomes virtual time.
-
-```mermaid
-flowchart TB
-    Engine["SimulationEngine"] --> Report["SimulationReport"]
-    Report --> Calculator["MetricsCalculator"]
-    Calculator --> Observed["ObservabilityReport"]
-    Report --> Model["Visualization snapshot"]
-    Observed --> Model
-    Model --> Controller["SimulationController"]
-    Controller --> Engine
-    Controller --> Renderer["raylib dashboard"]
-```
-
-`SimulationController` owns one scenario session. The session owns the service objects and the engine, and the services are constructed before the engine is registered to use them. Reset replaces that session. It does not clear private engine fields.
-
-Step runs `step_once()`: one Start or one Finish. Start arms playback and does not schedule the scenario again. Pause keeps the clock where it is. Resume continues. The controller becomes Completed only when no start is pending and no request is in progress. Playback speed waits 1 s, 500 ms, 250 ms, or 125 ms of frame time between steps at 0.5x, 1x, 2x, and 4x. Each frame performs at most one step. There is no sleep in the render loop.
-
-The built-in scenario is deterministic:
-
-| Service | What the scenario does |
-| --- | --- |
-| OrderService | `REQ-O1` succeeds at 0 ms. `REQ-O2` starts at 10 ms and times out at 50 ms. |
-| PaymentService | Two failures open the circuit at 30 ms. `REQ-P3` is rejected at 40 ms. The probe starts at 530 ms and succeeds at 630 ms. |
-| InventoryService | `REQ-I1` fails, retries, and recovers. `REQ-I2` fails both attempts and is dead-lettered. |
-
-Arrows are calls from `client` that the scenario scheduled. A solid arrow has been seen in the history. A dashed arrow is still only scheduled. Neither arrow is a permanent dependency.
-
-Service colors: idle is slate, healthy is green, processing is blue, failed and circuit open are red, timed out is amber, and dropped is orange. A circuit that was not configured is labeled `NOT CONFIGURED`. Closed is green, open is red, and half-open is amber. The payment probe is the frame where the node says `PROCESSING` and the circuit says `HALF-OPEN`.
-
-The metrics panel prints the Stage 6 report. Throughput is `N/A` until a completed request has a non-zero observation window. Clicking a node selects it and filters the timeline. Clicking a timeline row shows that event's type, virtual time, request id, trace id, and service. Shortcuts are Space (start, or pause and resume), N (step), R (reset), and Esc (close).
-
-### Building the window
-
-raylib is not downloaded. The Debug and Release presets leave `INCIDENTLAB_BUILD_GUI` OFF.
-
-When raylib is already installed:
+The GUI is optional. CMake does not download raylib. Point it at a local install if CMake cannot find the package:
 
 ```bash
 cmake -S . -B build/gui \
@@ -339,211 +70,119 @@ cmake --build build/gui
 ./build/gui/incidentlab_gui
 ```
 
-If CMake cannot find the package, pass `-Draylib_DIR=<prefix>/lib/cmake/raylib`. On a Linux machine where the distro package exists, the usual package is `libraylib-dev`. This repository does not install it. Without raylib, configuration of the GUI build stops with an error, and `cmake --preset debug` still builds the console and the tests.
+Build details, including sanitizers and coverage, are in [docs/build-guide.md](docs/build-guide.md).
 
-The window opens at 1440 by 900 and can be resized. The minimum size is 1024 by 700. The render target is 60 frames per second. Labels use the DejaVu Sans files in `assets/fonts`, which the build copies next to `incidentlab_gui`. Those files are the Bitstream Vera typefaces with the DejaVu changes, and `assets/fonts/LICENSE` is their notice. A system DejaVu Sans or Liberation Sans is used when the bundled files are absent. The built-in bitmap font is only the last fallback.
+## Demo
 
-`LIVE SIMULATION` keeps the Stage 7 controls. `SCENARIO COMPARISON` shows the four scenarios. Switching views does not reset the live simulation, and the comparison is not rerun on every frame. `RERUN` runs the four scenarios again.
+`./incidentlab` runs a fixed Stage 6 scenario and prints the metrics calculated from that run. Eight logical requests share the trace `TRACE-STAGE6`. Order requests succeed. Payment fails until a circuit breaker opens and later closes. Inventory retries once and recovers, then exhausts a later failure. The locked results are 8 completed requests, 4 successes, a 50% success rate, 2 retry attempts, 1 circuit rejection, and 4 dead-lettered requests. Throughput for that window is 8 requests/second.
 
-### Known limits
+`./incidentlab --compare` runs the four Stage 8 strategies on the same ten requests. See [Scenario comparison](#scenario-comparison).
 
-The live dashboard shows one playback scenario. It does not export metrics or replay the dead-letter queue. A request that starts and finishes in the same action does not appear as processing between steps. The order timeout and the payment probe do, because their finish is a later action. Request markers sit on the observed arrow. They are not a claim that a message traveled between processes.
+In the window, Start, Pause, Resume, Step, and Reset play a separate visualization scenario. Space pauses or resumes, N steps, and R resets. Escape closes the window.
+
+![Stepped live simulation with a timeout, an open circuit, and a failed inventory call](docs/screenshots/incidentlab-simulation.png)
 
 ## Scenario comparison
 
-`ScenarioRunner` builds a fresh engine, fresh services, and a fresh clock for every scenario. It then asks `MetricsCalculator` for the Stage 6 report. The comparison does not contain a second simulator.
+All four strategies schedule the same ten requests. Faults are tied to the request id and to that request's own attempt. Every delivery waits 20 ms of virtual time. Each scenario builds a new engine, so breaker and queue state do not leak across strategies.
 
-The shared workload is ten requests, trace `TRACE-CMP`:
-
-| Arrival | Request | Service | Attempt 1 | Later attempts |
-| --- | --- | --- | --- | --- |
-| 0 ms | `REQ-001` | OrderService | Success | Success |
-| 10 ms | `REQ-002` | OrderService | Timed out | Success |
-| 20 ms | `REQ-003` | PaymentService | Failed | Success |
-| 30 ms | `REQ-004` | PaymentService | Failed | Failed |
-| 40 ms | `REQ-005` | PaymentService | Failed | Failed |
-| 50 ms | `REQ-006` | InventoryService | Failed | Success |
-| 60 ms | `REQ-007` | InventoryService | Failed | Failed |
-| 200 ms | `REQ-008` | PaymentService | Success | Success |
-| 700 ms | `REQ-009` | InventoryService | Success | Success |
-| 1000 ms | `REQ-010` | PaymentService | Success | Success |
-
-Every delivery also waits 20 ms. That delay is the same in every scenario. The fault is stored on the request id and that request's own attempt number. It does not use the engine's service-wide `every_nth_request` counter, because a retry would otherwise change which later request fails.
-
-| Scenario | Retry | Circuit breaker |
+| Strategy | What changes | What the locked run shows |
 | --- | --- | --- |
-| Baseline | Off | Off |
-| Retry Only | 2 attempts, 100 ms backoff, multiplier 2 | Off |
-| Circuit Breaker | Off | 2 consecutive failures, 400 ms reset |
-| Full Resilience | Same retry | Same breaker |
+| Baseline | No retry and no circuit breaker | 4 successes, 40% success rate, 10 attempts, no dead letters |
+| Retry Only | Two attempts, 100 ms initial delay, multiplier 2 | 7 successes, 70% success rate, 16 attempts, average latency 92 ms |
+| Circuit Breaker | Opens after 2 failures, 400 ms reset | 3 successes, 30% success rate, 9 attempts, 1 rejection |
+| Full Resilience | Retry and the circuit breaker together | 4 successes, 40% success rate, 3 rejections, average latency 50 ms |
 
-The same settings are applied to OrderService, PaymentService, and InventoryService. The engine has no separate dead-letter switch. A terminal failure is dead-lettered when that service has a retry policy or a circuit breaker, so Retry Only and Circuit Breaker still produce dead-letter entries.
+Success-rate differences are percentage points against Baseline: Retry Only +30.00, Circuit Breaker −10.00, Full Resilience +0.00. A higher success rate can cost latency. A lower average latency can come from rejecting a call immediately. Circuit rejection is not a success. The dead-letter queue records a terminal failure only when that service has retry or a breaker, so Baseline records none.
 
-Rates, latency, throughput, attempts, and dead letters use the Stage 6 definitions. Failure rate is the share of completed requests that were not successful, so it includes timeouts and circuit rejections. `Failed` in the table is only `ServiceStatus::Failed`. A success-rate delta is in percentage points. The relative percent is omitted when the baseline value is zero. Throughput is unavailable, not infinite, when the observation window is empty or zero.
-
-On this workload the calculated global results are:
-
-| Metric | Baseline | Retry Only | Circuit Breaker | Full Resilience |
-| --- | --- | --- | --- | --- |
-| Successful | 4 | 7 | 3 | 4 |
-| Success rate | 40% | 70% | 30% | 40% |
-| Average latency | 20 ms | 92 ms | 18 ms | 50 ms |
-| P95 latency | 20 ms | 140 ms | 20 ms | 140 ms |
-| Throughput | 9.80 req/s | 9.80 req/s | 9.80 req/s | 9.80 req/s |
-| Attempts | 10 | 16 | 9 | 10 |
-| Retry attempts | 0 | 6 | 0 | 3 |
-| Circuit rejected | 0 | 0 | 1 | 3 |
-| DLQ entries | 0 | 3 | 7 | 6 |
-
-Throughput matches because every scenario still finishes at 1020 ms. A lower average latency under the circuit breaker includes an immediate rejection, so it is not by itself a faster service.
-
-## Project layout
-
-```text
-.
-├── CMakeLists.txt
-├── CMakePresets.json
-├── assets/fonts/            # DejaVu Sans for the optional window
-├── include/incidentlab/     # public headers of the core library
-│   ├── simulation/          # clock, scheduler, engine, report
-│   ├── observability/       # metrics and the Stage 6 demo
-│   ├── visualization/       # snapshot and simulation controller
-│   └── scenarios/           # shared workload and comparison report
-├── src/
-│   ├── main.cpp             # banner and report formatting
-│   ├── gui/                 # raylib window, compiled only when enabled
-│   ├── simulation/
-│   ├── observability/
-│   ├── visualization/
-│   ├── scenarios/
-│   └── *.cpp                # library implementation
-├── tests/
-│   ├── test_harness.hpp
-│   ├── domain_tests.cpp
-│   ├── simulation_tests.cpp
-│   ├── failure_tests.cpp
-│   ├── resilience_tests.cpp
-│   ├── observability_tests.cpp
-│   ├── visualization_tests.cpp
-│   ├── scenario_comparison_tests.cpp
-│   └── quality_tests.cpp
-├── tools/coverage_summary.py
-├── .github/workflows/ci.yml
-├── docs/architecture.md
-└── README.md
-```
+![Scenario comparison with Retry Only selected](docs/screenshots/incidentlab-scenario-comparison.png)
 
 ## Testing
 
-The tests are deterministic. They use fixed virtual timestamps and exact expected counts. They do not open a window, sleep for a simulated delay, call a network service, or read the system clock as an input. One quality test bounds wall-clock time only to show that a 60 second virtual delay returns immediately.
-
-`incidentlab_tests` prints one line per case. CTest registers one entry per source file. A single CTest entry is a suite, not one assertion. With no arguments the executable runs every suite.
-
-```text
-domain            tests/domain_tests.cpp                 21
-simulation        tests/simulation_tests.cpp             37
-failure           tests/failure_tests.cpp                30
-resilience        tests/resilience_tests.cpp             29
-observability     tests/observability_tests.cpp          52
-visualization     tests/visualization_tests.cpp          30
-scenario          tests/scenario_comparison_tests.cpp    30
-quality           tests/quality_tests.cpp                16
-```
-
-That is 245 cases. Domain tests call services and the event history directly. The simulation, failure, resilience, observability, visualization, and scenario suites run the engine, the controller, or the comparison on fixed inputs. Those are the integration tests. The quality suite holds the Stage 9 regression cases: the outcome partition, dead-letter lifetime across runs, the circuit reset boundary, retry backoff limits, a copied metrics report after the engine is destroyed, and a copied scenario result. `cached()` in the scenario suite is a read-only function-local report. Tests do not share a mutable engine.
-
-`SimulationClock` has no reset operation. A new clock starts at 0 and does not change an existing one.
-
-Completed requests are partitioned by terminal status:
-
-```text
-completed = successful + rejected + failed + timed out + dropped + circuit rejected
-```
-
-`successful + failed + circuit rejected` is not the definition of completed. Rejected, timed out, and dropped requests are completed too. The failure rate is `(completed - successful) / completed`, so it includes every unsuccessful terminal status. When `completed` is 0, both rates are 0. A relative comparison percent is unavailable when the baseline value is 0. Throughput is absent when the sample is empty or the observation window has zero duration.
-
-Each service has one failure policy. Configuring a new policy replaces the previous type. It does not stack. A terminal failure is dead-lettered only when that service has retry or a circuit breaker.
-
-### Local commands
-
-Debug and Release do not enable sanitizers, coverage, or the GUI.
+CTest registers eight suites. The executable contains 245 cases. One CTest line is one suite, not one assertion.
 
 ```bash
-cmake --preset debug
-cmake --build --preset debug
+cmake --preset debug && cmake --build --preset debug
 ctest --test-dir build/debug --output-on-failure
 
-cmake --preset release
-cmake --build --preset release
+cmake --preset release && cmake --build --preset release
 ctest --test-dir build/release --output-on-failure
 ```
 
-List cases, or run one suite:
+This release check, with the GUI left off, rebuilt Debug and Release with no compiler warnings. All 8 CTest suites passed in both configurations. The GCC sanitizer build and the coverage build also passed. Regenerated core coverage was:
 
-```bash
-./build/debug/incidentlab_tests --list
-./build/debug/incidentlab_tests --suite quality
+```text
+Line coverage:     84.3% (1472/1747)
+Function coverage: 91.8% (167/182)
 ```
 
-Sanitizers, in a separate directory. Use GCC for this option: the GCC packages include the sanitizer runtimes. Leak detection stays on. This build does not need raylib.
+That measurement covers `incidentlab_core` under `src/` and `include/incidentlab/`. It excludes tests, `src/gui/`, and generated files.
 
-```bash
-cmake -S . -B build/sanitizers \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DINCIDENTLAB_BUILD_GUI=OFF \
-  -DINCIDENTLAB_ENABLE_SANITIZERS=ON
-cmake --build build/sanitizers
-ctest --test-dir build/sanitizers --output-on-failure
-```
-
-Coverage uses `gcov`, which ships with GCC. `gcovr` is not required. The `coverage` target runs the tests and writes `coverage.txt`.
-
-```bash
-cmake -S . -B build/coverage \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DINCIDENTLAB_BUILD_GUI=OFF \
-  -DINCIDENTLAB_ENABLE_COVERAGE=ON
-cmake --build build/coverage
-cmake --build build/coverage --target coverage
-```
-
-Do not enable sanitizers and coverage in the same directory. Warnings become errors with `-DINCIDENTLAB_WARNINGS_AS_ERRORS=ON`. That option is off for a normal local build and on in the GitHub workflow.
-
-## Continuous integration
-
-`.github/workflows/ci.yml` runs on every push, every pull request, and a manual `workflow_dispatch`. It has read-only contents permission. It does not use `pull_request_target`, repository secrets, a display server, or raylib.
-
-| Job | Compiler | What it runs |
-| --- | --- | --- |
-| GCC Debug | GCC on Ubuntu 24.04 | `cmake --preset debug`, build, `ctest --test-dir build/debug --output-on-failure` |
-| GCC Release | GCC on Ubuntu 24.04 | `cmake --preset release`, build, `ctest --test-dir build/release --output-on-failure` |
-| Clang Debug | Clang on Ubuntu 24.04 | Debug build with the GUI off, then CTest |
-| GCC ASan and UBSan | GCC | Sanitizer build, then CTest. A sanitizer error fails the job |
-| GCC coverage | GCC | Coverage build, the `coverage` target, and an uploaded `coverage.txt` artifact |
-
-Each job stops after 20 minutes. A failing assertion prints `FAILED <name>` because CTest is invoked with `--output-on-failure`. Open the failed job in the GitHub Actions tab for that commit. The coverage job attaches `coverage-report`.
-
-The workflow file is checked in. Until GitHub has executed it, the remote result is pending.
+GitHub Actions on commit `36ae182` completed successfully for GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage: [run 44953893069](https://github.com/IG1234567/incidentLab/actions/runs/44953893069). Documentation added after that commit has not been pushed, so it has not been through Actions yet.
 
 [![CI](https://github.com/IG1234567/incidentLab/actions/workflows/ci.yml/badge.svg)](https://github.com/IG1234567/incidentLab/actions/workflows/ci.yml)
 
-## Development roadmap
+Commands and limitations are in [docs/testing.md](docs/testing.md).
 
-| Stage | Focus | Status |
-| --- | --- | --- |
-| 1 | Architecture and project setup | Complete |
-| 2 | Service and event models | Complete |
-| 3 | Simulation engine | Complete |
-| 4 | Failure injection | Complete |
-| 5 | Resilience patterns | Complete |
-| 6 | Metrics and observability | Complete |
-| 7 | Interactive visualization | Complete |
-| 8 | Scenario comparison | Implemented — pending review |
-| 9 | Automated testing, coverage, and CI | Implemented — remote CI execution pending |
-| 10 | Documentation and portfolio release | Planned |
+## Technology stack
 
-Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed. Stage 8 is not marked approved. Stage 9 is not marked approved until the workflow has run on GitHub.
+| Piece | Role |
+| --- | --- |
+| C++17 | The language of the core. The standard library supplies the containers, `optional`, and the clock type. |
+| CMake 3.20 | Out-of-source Debug and Release presets, optional GUI, sanitizers, and coverage. |
+| CTest | Runs the in-tree test executable. GoogleTest is not downloaded. |
+| GCC and Clang | Both are in the workflow. Sanitizer and coverage jobs use GCC because its packages provide `libasan`, `libubsan`, and `gcov`. |
+| raylib | Draws the optional window. The core does not include it. |
+| GitHub Actions | Builds and tests Ubuntu 24.04 on push, pull request, and manual dispatch. |
+
+C++17 was chosen because the project needs a typed domain model, RAII, and a header-only standard library, without a newer language standard. CMake keeps the console, the tests, and the window as separate targets. CTest is enough for deterministic assertions and does not require a network fetch. raylib is limited to presentation so the tests stay headless.
+
+## Project structure
+
+```text
+include/incidentlab/     public headers
+src/                     core, console, and optional GUI
+tests/                   one executable, eight suites
+tools/coverage_summary.py
+assets/fonts/            DejaVu Sans, with its license
+docs/                    architecture, guides, and screenshots
+.github/workflows/ci.yml
+```
+
+## Learning outcomes
+
+The project is an educational and portfolio exercise. It demonstrates object-oriented modeling, a discrete-event engine, failure injection, retry and circuit-breaker behavior, metric definitions that can be tested exactly, a presentation layer that does not own the simulation, and automated checks with sanitizers and coverage.
+
+## Limitations
+
+IncidentLab is a simulator. It is not a production distributed system. There is no network, no persistence, no authentication, and no replay of the dead-letter queue. Virtual time does not sleep. Percentiles use nearest-rank. Retries do not jitter. One service has one failure policy. The binary still reports version 0.1.0; the 1.0.0 notes in this repository are a release candidate, not a published release. This check did not build with MSVC.
+
+## Future improvements
+
+These are not implemented.
+
+- A project license chosen by the maintainer
+- A version bump to 1.0.0 after that choice is approved
+- Dead-letter replay
+- More than one failure policy on a service
+- A verified Windows build
+- Coverage for the raylib sources
 
 ## License
 
-A license will be chosen in Stage 10, when the project is prepared for public release. Until then, all rights are reserved.
+The application source does not yet have a project license. MIT and Apache-2.0 are both workable options; neither has been selected. Do not treat the source as licensed for redistribution until a `LICENSE` file is added.
+
+The window uses DejaVu Sans and DejaVu Sans Bold. Those files and the Bitstream Vera / DejaVu notice are in `assets/fonts/`. DejaVu changes are in the public domain. The upstream notice must stay with the font files.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [OOP design](docs/oop-design.md)
+- [Design decisions](docs/design-decisions.md)
+- [User guide](docs/user-guide.md)
+- [Build guide](docs/build-guide.md)
+- [Testing](docs/testing.md)
+- [Demonstration script](docs/demo-script.md)
+- [Portfolio text](docs/portfolio-description.md)
+- [Release checklist](docs/release-checklist.md)
+- [Release notes](docs/release-notes-v1.0.0.md)
