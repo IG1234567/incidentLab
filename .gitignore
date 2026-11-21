@@ -11,6 +11,13 @@ Testing/
 CMakeUserPresets.json
 compile_commands.json
 
+# Coverage data
+*.gcno
+*.gcda
+*.gcov
+*.gcov.json.gz
+coverage.txt
+
 # Object files and binaries
 *.o
 *.obj

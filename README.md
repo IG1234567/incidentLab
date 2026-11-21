@@ -4,7 +4,7 @@ IncidentLab is a distributed systems failure simulator for learning how a small 
 
 The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 8 of 10 is implemented and waiting for review.** The console still prints the Stage 6 metrics report. `./incidentlab --compare` prints the scenario comparison. An optional raylib window can play the Stage 7 scenario or show the comparison. The core library does not depend on raylib, and the Debug and Release presets do not build the window.
+**Stage 9 of 10 is implemented and waiting for review.** The console still prints the Stage 6 metrics report. `./incidentlab --compare` prints the scenario comparison. An optional raylib window can play the Stage 7 scenario or show the comparison. The core library does not depend on raylib, and the Debug and Release presets do not build the window. Stage 8 remains implemented and waiting for review. The GitHub Actions workflow is in the repository; a green run is recorded only after GitHub executes it.
 
 ## Implemented features
 
@@ -26,24 +26,30 @@ The whole system runs in one process. Services are models. Nothing is deployed, 
 - An optional `incidentlab_gui` window, built only when raylib is already installed and `INCIDENTLAB_BUILD_GUI` is ON
 - Automated tests for the domain model, the simulation, failure injection, resilience, observability, the visualization controller, and scenario comparison
 - Four predefined scenarios on one shared workload: Baseline, Retry Only, Circuit Breaker, and Full Resilience
+- CTest suites for the existing cases, plus quality tests for accounting, lifetimes, and boundaries
+- Optional AddressSanitizer and UndefinedBehaviorSanitizer builds
+- Optional GCC/Clang line and function coverage, summarized without gcovr
+- A GitHub Actions workflow for Debug, Release, Clang, sanitizers, and coverage
 
 ## Planned features
 
 These are not in the build yet.
 
 - A simulated API gateway, event queue, and databases
-- An interactive architecture view is optional and requires a local raylib install. It is not part of the default presets.
-- GoogleTest and a GitHub Actions workflow
+- Stage 10 release notes and a chosen license
+
+The interactive window is optional and requires a local raylib install. It is not part of the default presets.
 
 ## Technology stack
 
-| Now | Later, in the named stage |
+| Now | Later |
 | --- | --- |
-| C++17, CMake, CTest, the C++ standard library | GoogleTest (Stage 9, only if it can be vendored without a download) |
-| Git | raylib, only for the optional GUI (Stage 7) |
-|  | GitHub Actions (Stage 9) |
+| C++17, CMake, CTest, the C++ standard library | Stage 10 release notes and a license |
+| Git and GitHub Actions |  |
+| raylib, only for the optional GUI |  |
+| GCC/Clang sanitizers and `gcov`, only when those options are enabled |  |
 
-The tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window.
+The tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window and without GitHub.
 
 ## Discrete-event simulation
 
@@ -419,12 +425,107 @@ Throughput matches because every scenario still finishes at 1020 ms. A lower ave
 │   ├── resilience_tests.cpp
 │   ├── observability_tests.cpp
 │   ├── visualization_tests.cpp
-│   └── scenario_comparison_tests.cpp
+│   ├── scenario_comparison_tests.cpp
+│   └── quality_tests.cpp
+├── tools/coverage_summary.py
+├── .github/workflows/ci.yml
 ├── docs/architecture.md
 └── README.md
 ```
 
-`assets/` and `.github/workflows/` are added in the stages that need them.
+## Testing
+
+The tests are deterministic. They use fixed virtual timestamps and exact expected counts. They do not open a window, sleep for a simulated delay, call a network service, or read the system clock as an input. One quality test bounds wall-clock time only to show that a 60 second virtual delay returns immediately.
+
+`incidentlab_tests` prints one line per case. CTest registers one entry per source file. A single CTest entry is a suite, not one assertion. With no arguments the executable runs every suite.
+
+```text
+domain            tests/domain_tests.cpp                 21
+simulation        tests/simulation_tests.cpp             37
+failure           tests/failure_tests.cpp                30
+resilience        tests/resilience_tests.cpp             29
+observability     tests/observability_tests.cpp          52
+visualization     tests/visualization_tests.cpp          30
+scenario          tests/scenario_comparison_tests.cpp    30
+quality           tests/quality_tests.cpp                16
+```
+
+That is 245 cases. Domain tests call services and the event history directly. The simulation, failure, resilience, observability, visualization, and scenario suites run the engine, the controller, or the comparison on fixed inputs. Those are the integration tests. The quality suite holds the Stage 9 regression cases: the outcome partition, dead-letter lifetime across runs, the circuit reset boundary, retry backoff limits, a copied metrics report after the engine is destroyed, and a copied scenario result. `cached()` in the scenario suite is a read-only function-local report. Tests do not share a mutable engine.
+
+`SimulationClock` has no reset operation. A new clock starts at 0 and does not change an existing one.
+
+Completed requests are partitioned by terminal status:
+
+```text
+completed = successful + rejected + failed + timed out + dropped + circuit rejected
+```
+
+`successful + failed + circuit rejected` is not the definition of completed. Rejected, timed out, and dropped requests are completed too. The failure rate is `(completed - successful) / completed`, so it includes every unsuccessful terminal status. When `completed` is 0, both rates are 0. A relative comparison percent is unavailable when the baseline value is 0. Throughput is absent when the sample is empty or the observation window has zero duration.
+
+Each service has one failure policy. Configuring a new policy replaces the previous type. It does not stack. A terminal failure is dead-lettered only when that service has retry or a circuit breaker.
+
+### Local commands
+
+Debug and Release do not enable sanitizers, coverage, or the GUI.
+
+```bash
+cmake --preset debug
+cmake --build --preset debug
+ctest --test-dir build/debug --output-on-failure
+
+cmake --preset release
+cmake --build --preset release
+ctest --test-dir build/release --output-on-failure
+```
+
+List cases, or run one suite:
+
+```bash
+./build/debug/incidentlab_tests --list
+./build/debug/incidentlab_tests --suite quality
+```
+
+Sanitizers, in a separate directory. Use GCC for this option: the GCC packages include the sanitizer runtimes. Leak detection stays on. This build does not need raylib.
+
+```bash
+cmake -S . -B build/sanitizers \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DINCIDENTLAB_BUILD_GUI=OFF \
+  -DINCIDENTLAB_ENABLE_SANITIZERS=ON
+cmake --build build/sanitizers
+ctest --test-dir build/sanitizers --output-on-failure
+```
+
+Coverage uses `gcov`, which ships with GCC. `gcovr` is not required. The `coverage` target runs the tests and writes `coverage.txt`.
+
+```bash
+cmake -S . -B build/coverage \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DINCIDENTLAB_BUILD_GUI=OFF \
+  -DINCIDENTLAB_ENABLE_COVERAGE=ON
+cmake --build build/coverage
+cmake --build build/coverage --target coverage
+```
+
+Do not enable sanitizers and coverage in the same directory. Warnings become errors with `-DINCIDENTLAB_WARNINGS_AS_ERRORS=ON`. That option is off for a normal local build and on in the GitHub workflow.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push, every pull request, and a manual `workflow_dispatch`. It has read-only contents permission. It does not use `pull_request_target`, repository secrets, a display server, or raylib.
+
+| Job | Compiler | What it runs |
+| --- | --- | --- |
+| GCC Debug | GCC on Ubuntu 24.04 | `cmake --preset debug`, build, `ctest --test-dir build/debug --output-on-failure` |
+| GCC Release | GCC on Ubuntu 24.04 | `cmake --preset release`, build, `ctest --test-dir build/release --output-on-failure` |
+| Clang Debug | Clang on Ubuntu 24.04 | Debug build with the GUI off, then CTest |
+| GCC ASan and UBSan | GCC | Sanitizer build, then CTest. A sanitizer error fails the job |
+| GCC coverage | GCC | Coverage build, the `coverage` target, and an uploaded `coverage.txt` artifact |
+
+Each job stops after 20 minutes. A failing assertion prints `FAILED <name>` because CTest is invoked with `--output-on-failure`. Open the failed job in the GitHub Actions tab for that commit. The coverage job attaches `coverage-report`.
+
+The workflow file is checked in. Until GitHub has executed it, the remote result is pending.
+
+[![CI](https://github.com/IG1234567/incidentLab/actions/workflows/ci.yml/badge.svg)](https://github.com/IG1234567/incidentLab/actions/workflows/ci.yml)
 
 ## Development roadmap
 
@@ -438,10 +539,10 @@ Throughput matches because every scenario still finishes at 1020 ms. A lower ave
 | 6 | Metrics and observability | Complete |
 | 7 | Interactive visualization | Complete |
 | 8 | Scenario comparison | Implemented — pending review |
-| 9 | Extended testing and CI | Planned |
+| 9 | Automated testing, coverage, and CI | Implemented — remote CI execution pending |
 | 10 | Documentation and portfolio release | Planned |
 
-Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed. Stage 8 is not marked approved.
+Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed. Stage 8 is not marked approved. Stage 9 is not marked approved until the workflow has run on GitHub.
 
 ## License
 

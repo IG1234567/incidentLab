@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug:
+    name: GCC Debug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CXX: g++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset debug -DINCIDENTLAB_BUILD_GUI=OFF -DINCIDENTLAB_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build --preset debug
+      - name: Test
+        run: ctest --test-dir build/debug --output-on-failure
+
+  release:
+    name: GCC Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CXX: g++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset release -DINCIDENTLAB_BUILD_GUI=OFF -DINCIDENTLAB_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build --preset release
+      - name: Test
+        run: ctest --test-dir build/release --output-on-failure
+
+  clang:
+    name: Clang Debug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Configure
+        run: >
+          cmake -S . -B build/clang
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DINCIDENTLAB_BUILD_GUI=OFF
+          -DINCIDENTLAB_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build/clang
+      - name: Test
+        run: ctest --test-dir build/clang --output-on-failure
+
+  sanitizers:
+    name: GCC ASan and UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CXX: g++
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build/sanitizers
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=g++
+          -DINCIDENTLAB_BUILD_GUI=OFF
+          -DINCIDENTLAB_ENABLE_SANITIZERS=ON
+          -DINCIDENTLAB_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build/sanitizers
+      - name: Test
+        run: ctest --test-dir build/sanitizers --output-on-failure
+
+  coverage:
+    name: GCC coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CXX: g++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build/coverage
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=g++
+          -DINCIDENTLAB_BUILD_GUI=OFF
+          -DINCIDENTLAB_ENABLE_COVERAGE=ON
+      - name: Build
+        run: cmake --build build/coverage
+      - name: Test and report
+        run: cmake --build build/coverage --target coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: build/coverage/coverage.txt
+          if-no-files-found: error

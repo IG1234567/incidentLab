@@ -22,11 +22,49 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # incidentlab_core holds simulation code from Stage 2 onward.
 # The executable is only a presentation shell and links this library.
+option(INCIDENTLAB_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(INCIDENTLAB_ENABLE_SANITIZERS
+    "Enable AddressSanitizer and UndefinedBehaviorSanitizer for GCC or Clang" OFF)
+option(INCIDENTLAB_ENABLE_COVERAGE
+    "Enable GCC/Clang coverage instrumentation for the core library" OFF)
+
+if(INCIDENTLAB_ENABLE_SANITIZERS AND INCIDENTLAB_ENABLE_COVERAGE)
+    message(FATAL_ERROR
+        "Sanitizers and coverage use separate build directories. "
+        "Enable only one of INCIDENTLAB_ENABLE_SANITIZERS or INCIDENTLAB_ENABLE_COVERAGE.")
+endif()
+
 function(incidentlab_apply_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /permissive-)
+        if(INCIDENTLAB_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE /WX)
+        endif()
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        if(INCIDENTLAB_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+# PUBLIC options travel to every target that links the core, including the tests.
+# A sanitizer build therefore instruments the library and the test executable together.
+function(incidentlab_apply_instrumentation target)
+    if(NOT INCIDENTLAB_ENABLE_SANITIZERS AND NOT INCIDENTLAB_ENABLE_COVERAGE)
+        return()
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "INCIDENTLAB_ENABLE_SANITIZERS and INCIDENTLAB_ENABLE_COVERAGE support GCC and Clang.")
+    endif()
+    if(INCIDENTLAB_ENABLE_SANITIZERS)
+        target_compile_options(${target} PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${target} PUBLIC -fsanitize=address,undefined)
+    endif()
+    if(INCIDENTLAB_ENABLE_COVERAGE)
+        target_compile_options(${target} PUBLIC --coverage)
+        target_link_options(${target} PUBLIC --coverage)
     endif()
 endfunction()
 
@@ -72,6 +110,7 @@ target_compile_definitions(incidentlab_core
 
 target_compile_features(incidentlab_core PUBLIC cxx_std_17)
 incidentlab_apply_warnings(incidentlab_core)
+incidentlab_apply_instrumentation(incidentlab_core)
 
 add_executable(incidentlab
     src/main.cpp
@@ -93,12 +132,41 @@ add_executable(incidentlab_tests
     tests/observability_tests.cpp
     tests/visualization_tests.cpp
     tests/scenario_comparison_tests.cpp
+    tests/quality_tests.cpp
 )
 target_link_libraries(incidentlab_tests PRIVATE incidentlab::core)
 target_include_directories(incidentlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_compile_features(incidentlab_tests PRIVATE cxx_std_17)
 incidentlab_apply_warnings(incidentlab_tests)
-add_test(NAME incidentlab_domain COMMAND incidentlab_tests)
+
+# One CTest entry per source suite. Each entry runs only that suite.
+# `incidentlab_tests` with no arguments still runs every case.
+set(INCIDENTLAB_TEST_SUITES
+    domain
+    simulation
+    failure
+    resilience
+    observability
+    visualization
+    scenario
+    quality
+)
+foreach(suite IN LISTS INCIDENTLAB_TEST_SUITES)
+    add_test(NAME incidentlab_${suite} COMMAND incidentlab_tests --suite ${suite})
+endforeach()
+
+if(INCIDENTLAB_ENABLE_COVERAGE)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_custom_target(coverage
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --test-dir ${CMAKE_BINARY_DIR}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/coverage_summary.py
+                ${CMAKE_BINARY_DIR} ${CMAKE_BINARY_DIR}/coverage.txt
+        DEPENDS incidentlab_tests
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        USES_TERMINAL
+        COMMENT "Run tests and summarize core line and function coverage"
+    )
+endif()
 
 # The window is optional. Debug and Release presets leave this OFF, so they do not need raylib.
 # IncidentLab does not download raylib.

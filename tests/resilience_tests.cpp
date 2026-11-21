@@ -1,3 +1,4 @@
+#define INCIDENTLAB_TEST_SUITE "resilience"
 #include "test_harness.hpp"
 
 #include "incidentlab/order_service.hpp"

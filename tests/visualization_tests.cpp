@@ -1,3 +1,4 @@
+#define INCIDENTLAB_TEST_SUITE "visualization"
 #include "test_harness.hpp"
 
 #include "incidentlab/service.hpp"

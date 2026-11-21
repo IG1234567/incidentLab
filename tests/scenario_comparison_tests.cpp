@@ -1,3 +1,4 @@
+#define INCIDENTLAB_TEST_SUITE "scenario"
 #include "test_harness.hpp"
 
 #include "incidentlab/event.hpp"

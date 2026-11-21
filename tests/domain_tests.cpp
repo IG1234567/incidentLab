@@ -1,3 +1,4 @@
+#define INCIDENTLAB_TEST_SUITE "domain"
 #include "test_harness.hpp"
 
 #include "incidentlab/event.hpp"
@@ -299,4 +300,6 @@ INCIDENTLAB_TEST(rejected_operation_is_recorded_as_request_rejected) {
     EXPECT(next_event_number == 3);
 }
 
-int main() { return incidentlab_test::run_all() == 0 ? 0 : 1; }
+int main(int argc, char** argv) {
+    return incidentlab_test::run_all(argc, argv) == 0 ? 0 : 1;
+}

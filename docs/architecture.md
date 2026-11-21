@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. Stage 7 adds a controller and an optional raylib window. Stage 8 runs that same engine on four resilience configurations. The core library still does not include raylib.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. Stage 7 adds a controller and an optional raylib window. Stage 8 runs that same engine on four resilience configurations. Stage 9 adds suite-level CTest entries, sanitizer and coverage options, and a GitHub Actions workflow. The core library still does not include raylib. Stage 8 is implemented and still waiting for review. The workflow has not been claimed as a passing GitHub run until GitHub executes it.
 
 ## What exists now
 
@@ -35,7 +35,7 @@ flowchart LR
 | `incidentlab` | Print the startup banner and the Stage 6 metrics report. `--compare` prints the Stage 8 table. | `incidentlab::core` |
 | `incidentlab_gui` | Draw the live snapshot or the comparison. Built only when raylib is found and the option is ON. | `incidentlab::core`, raylib |
 | `incidentlab_core` | Version, domain types, the engine, metrics, the visualization controller, and scenario comparison. | C++ standard library only |
-| `incidentlab_tests` | Assert the domain rules, the simulation, and the controller. No window. | `incidentlab::core` |
+| `incidentlab_tests` | Assert the domain rules, the simulation, the controller, and the comparison. No window. CTest runs one suite per source file. | `incidentlab::core` |
 
 The library does not include `iostream`. `src/main.cpp` formats `ObservabilityReport`. Tests call the engine and the calculators directly.
 
@@ -328,6 +328,46 @@ The scenario session is one object owned by `std::unique_ptr`. Its members are t
 
 The node status is taken from the latest history and the breaker snapshot. Open wins over the last outcome. Half-open, or a received request that has not finished, is processing. Timed out and dropped stay distinct from failed. A service with no breaker stores an empty `optional`, which the window prints as `NOT CONFIGURED`.
 
+## Stage 9 testing and continuous integration
+
+```mermaid
+flowchart LR
+    subgraph local [Local or GitHub Actions]
+        CTest["CTest suites"]
+        Binary["incidentlab_tests"]
+    end
+    subgraph optional [Optional build directories]
+        Sanitizers["ASan and UBSan"]
+        Coverage["gcov summary"]
+    end
+    CTest --> Binary
+    Binary --> Core["incidentlab_core"]
+    Sanitizers --> Core
+    Coverage --> Core
+```
+
+The harness registers each case with a suite name taken from the source file. `incidentlab_tests --suite observability` runs that file. `incidentlab_tests --list` prints every name. CTest's eight entries are those suites. One green CTest line does not mean one assertion.
+
+The cases stay free of random numbers, sockets, databases, and a raylib window. Controller tests use `SimulationController` directly. A 60 second slow response is virtual time. The quality test checks that the call returns without waiting for that minute.
+
+Sanitizer and coverage flags are options, off by default, and applied as public compile and link options of `incidentlab_core`. The console and the tests link that library, so they are instrumented with it. The GUI is not part of those builds. The two options cannot be combined in one directory. AddressSanitizer keeps leak detection enabled. There is no suppression file. The sanitizer and coverage jobs use GCC because that compiler's packages provide `libasan`, `libubsan`, and `gcov`. Clang is used for a separate Debug job. A Clang sanitizer build also needs the matching compiler-rt libraries, which are not assumed.
+
+`tools/coverage_summary.py` reads `gcov --json-format` for the core objects. It counts lines and functions under `src/` and `include/incidentlab/`, and skips `tests/`, `src/gui/`, and generated files. Ordinary Debug and Release builds do not run it.
+
+GitHub Actions uses Ubuntu 24.04, GCC for Debug, Release, sanitizers, and coverage, and Clang for an extra Debug job. The workflow permission is `contents: read`. It does not use `pull_request_target` or secrets. Presets stay on the default generator, which is Unix Makefiles when Ninja is not selected.
+
+### Accounting rule
+
+`MetricsCalculator` counts each logical request once. The terminal statuses are mutually exclusive:
+
+```text
+completed = successful + rejected + failed + timed out + dropped + circuit rejected
+```
+
+The failure rate uses `completed - successful`, not `failed` alone. Circuit rejections, timeouts, drops, and unsupported operations are unsuccessful completed requests. An empty sample has 0% rates, not 100% success. Throughput is empty when nothing completed or when the first start and the last completion are the same timestamp.
+
+A service failure with neither retry nor a circuit breaker is a completed failure and is not dead-lettered. Dead letters from one engine do not appear in another engine.
+
 ## How later stages plug in
 
 ```mermaid
@@ -346,7 +386,7 @@ flowchart TB
         Domain["Domain models, Stage 2"]
     end
 
-    Tests["Domain tests now<br/>CI in Stage 9"]
+    Tests["Suite tests and CI"]
 
     Console --> Domain
     Viz --> Engine
@@ -369,10 +409,10 @@ flowchart TB
 | 6 | `MetricsCalculator` reads `SimulationReport` | Rates, latency, throughput, and the timeline. Complete. |
 | 7 | `SimulationController` in the core, `incidentlab_gui` beside it | raylib draws snapshots. It links `incidentlab::core` and contains no simulation rules. Complete. |
 | 8 | `ScenarioRunner` and `ComparisonReport` in the core | Four strategies, one workload, Stage 6 metrics. Implemented, pending review. |
-| 9 | GoogleTest, if vendored without a network fetch, and `.github/workflows/` | Broader tests and CI. |
+| 9 | `tests/quality_tests.cpp`, sanitizer and coverage options, `.github/workflows/ci.yml` | Automated tests and CI. Implemented. Remote workflow execution is pending. |
 | 10 | release notes and a license | Portfolio write-up. |
 
-The Stage 2 tests are an executable with assertions, registered with CTest. GoogleTest is not downloaded. A build must succeed with no network access.
+The tests are one executable, registered with CTest as one suite per source file. GoogleTest is not downloaded. A build must succeed with no network access. The default presets do not need raylib, sanitizers, or coverage tools beyond the compiler.
 
 ## Separation of concerns
 
@@ -381,7 +421,7 @@ The Stage 2 tests are an executable with assertions, registered with CTest. Goog
 - **Metrics** reads a finished report. It does not run the simulation or format text.
 - **Presentation** prints the banner and the observability report, or draws a snapshot.
 - **The controller** decides when the engine may run the next action. It does not invent outcomes.
-- **Tests** call the core directly. They do not start from `main()` and they do not open a window.
+- **Tests** call the core directly. They do not start from `main()` and they do not open a window. Continuous integration runs the same executable.
 
 ## Decisions
 

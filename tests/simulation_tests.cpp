@@ -1,3 +1,4 @@
+#define INCIDENTLAB_TEST_SUITE "simulation"
 #include "test_harness.hpp"
 
 #include "incidentlab/inventory_service.hpp"
