@@ -20,7 +20,7 @@ jobs:
     env:
       CXX: g++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake --preset debug -DINCIDENTLAB_BUILD_GUI=OFF -DINCIDENTLAB_WARNINGS_AS_ERRORS=ON
       - name: Build
@@ -35,7 +35,7 @@ jobs:
     env:
       CXX: g++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake --preset release -DINCIDENTLAB_BUILD_GUI=OFF -DINCIDENTLAB_WARNINGS_AS_ERRORS=ON
       - name: Build
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Clang
         run: sudo apt-get update && sudo apt-get install -y clang
       - name: Configure
@@ -73,7 +73,7 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: >
           cmake -S . -B build/sanitizers
@@ -94,7 +94,7 @@ jobs:
     env:
       CXX: g++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: >
           cmake -S . -B build/coverage
@@ -107,7 +107,7 @@ jobs:
       - name: Test and report
         run: cmake --build build/coverage --target coverage
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: build/coverage/coverage.txt
