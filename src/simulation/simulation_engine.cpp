@@ -2,6 +2,7 @@
 
 #include "incidentlab/event.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
@@ -122,6 +123,14 @@ SimulationReport SimulationEngine::report() const {
     report.event_times = event_times_;
     report.executions = executions_;
     report.dead_letters = dead_letters_.entries();
+    report.circuit_states.reserve(breakers_.size());
+    for (const auto& entry : breakers_) {
+        report.circuit_states.push_back(CircuitStateSnapshot{entry.first, entry.second.state()});
+    }
+    std::sort(report.circuit_states.begin(), report.circuit_states.end(),
+              [](const CircuitStateSnapshot& left, const CircuitStateSnapshot& right) {
+                  return left.service_name < right.service_name;
+              });
     return report;
 }
 
@@ -406,6 +415,8 @@ bool SimulationEngine::finish_attempt(const Request& request, const std::string&
 
     const bool track_dlq = breaker != nullptr || retry_configured;
     const bool send_dlq = !retry && track_dlq && is_service_failure(result.status);
+    const bool retries_exhausted = retry_configured && is_service_failure(result.status) &&
+                                   attempt_number >= retry_found->second.max_attempts;
 
     const auto logical_found = logical_.find(request.request_id);
     const SimulationClock::Time started =
@@ -439,7 +450,7 @@ bool SimulationEngine::finish_attempt(const Request& request, const std::string&
     }
 
     ExecutionRecord execution{outcome_time, request.request_id, request.trace_id, service_name,
-                              request.operation, result, started};
+                              request.operation, result, started, retries_exhausted};
     bool dlq_pushed = false;
     const std::size_t events_before = history_.size();
     const std::size_t times_before = event_times_.size();

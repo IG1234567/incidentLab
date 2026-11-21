@@ -47,6 +47,8 @@ add_library(incidentlab_core STATIC
     src/simulation/stage3_demo.cpp
     src/simulation/stage4_demo.cpp
     src/simulation/stage5_demo.cpp
+    src/observability/metrics_calculator.cpp
+    src/observability/stage6_demo.cpp
 )
 add_library(incidentlab::core ALIAS incidentlab_core)
 
@@ -83,6 +85,7 @@ add_executable(incidentlab_tests
     tests/simulation_tests.cpp
     tests/failure_tests.cpp
     tests/resilience_tests.cpp
+    tests/observability_tests.cpp
 )
 target_link_libraries(incidentlab_tests PRIVATE incidentlab::core)
 target_include_directories(incidentlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

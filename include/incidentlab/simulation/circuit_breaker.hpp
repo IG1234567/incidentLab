@@ -9,6 +9,18 @@ namespace incidentlab {
 
 enum class CircuitState { Closed, Open, HalfOpen };
 
+inline const char* to_string(CircuitState state) noexcept {
+    switch (state) {
+    case CircuitState::Closed:
+        return "CLOSED";
+    case CircuitState::Open:
+        return "OPEN";
+    case CircuitState::HalfOpen:
+        return "HALF_OPEN";
+    }
+    return "CLOSED";
+}
+
 enum class CircuitAdmission { Allow, Probe, Block };
 
 /// How many consecutive failures open the circuit, and how long it stays open.

@@ -2,6 +2,7 @@
 
 #include "incidentlab/event_history.hpp"
 #include "incidentlab/service_result.hpp"
+#include "incidentlab/simulation/circuit_breaker.hpp"
 #include "incidentlab/simulation/dead_letter_queue.hpp"
 #include "incidentlab/simulation/simulation_clock.hpp"
 
@@ -15,6 +16,8 @@ namespace incidentlab {
 ///
 /// simulation_time is the virtual time of the final outcome. start_time is when the logical
 /// request first started. They are equal when the outcome is recorded at that start.
+/// retries_exhausted is true only when a retry policy allowed at least one retry and this
+/// failure used the last allowed attempt. A circuit block is not an exhausted retry.
 struct ExecutionRecord {
     SimulationClock::Time simulation_time = 0;
     std::string request_id;
@@ -23,6 +26,13 @@ struct ExecutionRecord {
     std::string operation;
     ServiceResult result;
     SimulationClock::Time start_time = 0;
+    bool retries_exhausted = false;
+};
+
+/// Breaker state at the moment report() was called. One entry per configured service.
+struct CircuitStateSnapshot {
+    std::string service_name;
+    CircuitState state = CircuitState::Closed;
 };
 
 /// A consistent snapshot of one engine.
@@ -47,6 +57,7 @@ struct SimulationReport {
     std::vector<SimulationClock::Time> event_times;
     std::vector<ExecutionRecord> executions;
     std::vector<DeadLetterEntry> dead_letters;
+    std::vector<CircuitStateSnapshot> circuit_states;
 };
 
 }  // namespace incidentlab

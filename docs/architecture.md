@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Metrics are still Stage 6.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. The window is still Stage 7.
 
 ## What exists now
 
@@ -29,11 +29,11 @@ flowchart LR
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
-| `incidentlab` | Print the startup banner and the Stage 5 report. | `incidentlab::core` |
+| `incidentlab` | Print the startup banner and the Stage 6 metrics report. | `incidentlab::core` |
 | `incidentlab_core` | Version, domain types, the Stage 2 script, and the simulation engine. | C++ standard library only |
 | `incidentlab_tests` | Assert the domain rules and the simulation. | `incidentlab::core` |
 
-The library does not include `iostream`. `src/main.cpp` formats `SimulationReport`. Tests call the engine and `run_stage2_demo()` directly.
+The library does not include `iostream`. `src/main.cpp` formats `ObservabilityReport`. Tests call the engine and the calculators directly.
 
 The version number is still defined once, in `project(VERSION ...)` inside `CMakeLists.txt`.
 
@@ -177,7 +177,7 @@ A zero-delay outcome is recorded before the engine reads the next queued action,
 
 ## Failure injection
 
-Failures are simulated. No packet is sent, no server is contacted, and a virtual delay does not call `sleep`. Retries and circuit breakers are Stage 5. They are not in this build.
+Failures are simulated. No packet is sent, no server is contacted, and a virtual delay does not call `sleep`. Retries and circuit breakers are implemented in Stage 5.
 
 ```mermaid
 flowchart TB
@@ -226,6 +226,34 @@ An attempt that started before the circuit opened still finishes. If the circuit
 
 The dead-letter queue is used only when that service has a retry policy with at least two attempts, or a circuit breaker. A final `Failed`, `TimedOut`, `Dropped`, or `CircuitRejected` outcome is stored once, with the original request, the trace id, the number of attempts that reached the service, the virtual time, and the reason. Stage 4 runs do not write the queue. Nothing reads it back into the scheduler.
 
+## Metrics
+
+```mermaid
+flowchart TB
+    Engine["SimulationEngine"] --> Report["SimulationReport"]
+    Report --> Calculator["MetricsCalculator"]
+    Calculator --> Observed["ObservabilityReport"]
+    Observed --> Console["Console"]
+```
+
+The calculator is read-only. It throws `std::logic_error` when the history and its timestamps differ in length, when counters disagree with the execution records, or when a completion is earlier than the logical start. Repeated calls on the same report return the same numbers.
+
+Success rate is successful logical requests divided by completed logical requests. Failure rate uses the other completed outcomes. A retry does not add a logical request. An empty run reports 0% for both rates.
+
+Latency is completion time minus the original start, in virtual milliseconds. Nearest-rank picks `ceil(p × n)` and uses that position in the sorted sample. P50, P95, and P99 are the fractions 50/100, 95/100, and 99/100, computed with integers so binary floating point does not change the rank.
+
+The observation window is the earliest original start through the latest completion among completed requests. Throughput is `completed × 1000 / duration_ms`. A zero-length window, and a run with nothing completed, leave throughput empty.
+
+Services are the names that appear in the report, sorted alphabetically. An unknown target is reported under that target name. Each service has its own outcome counts, attempt counts, latency, circuit openings, and dead-letter count.
+
+Retry attempts are `RetryScheduled` events. Requests requiring retry are the distinct request ids on those events. Recovered requests are the ones that later succeed. Exhausted requests are the ones whose execution record says the last allowed attempt failed. `ExecutionRecord::retries_exhausted` is that fact. It is not inferred from the dead-letter queue.
+
+`CircuitOpened`, `CircuitHalfOpened`, and `CircuitClosed` are counted per service. Blocked requests are `CircuitRejected` outcomes. The final state is the snapshot `report()` copied from the live breaker. A blocked request does not count as another opening.
+
+Dead-letter observations keep the request id, trace id, service, status, attempt count, virtual time, and reason. They do not copy the rest of the request. The timeline copies each event with its timestamp and keeps history order. Filters for service, request id, and trace id return new vectors.
+
+A registered service that never appears in the report is omitted. In-progress attempts count as attempts and do not count as completed latency or throughput. Percentiles are not interpolated. The queue is not replayed, and nothing is drawn on screen.
+
 ## How later stages plug in
 
 ```mermaid
@@ -263,8 +291,8 @@ flowchart TB
 | 2 | `include/incidentlab/`, `src/`, `tests/` | Requests, services, events, history, and the fixed demo. Complete. |
 | 3 | `include/incidentlab/simulation/`, `src/simulation/` | Virtual clock, scheduler, and engine. Complete. |
 | 4 | `FailureConfig` inside `SimulationEngine` | Deterministic failure injection. Complete. |
-| 5 | Retry, `CircuitBreaker`, and `DeadLetterQueue` inside `SimulationEngine` | Resilience patterns. Implemented. |
-| 6 | metrics the engine records | Counters and health. The UI only reads them. |
+| 5 | Retry, `CircuitBreaker`, and `DeadLetterQueue` inside `SimulationEngine` | Resilience patterns. Complete. |
+| 6 | `MetricsCalculator` reads `SimulationReport` | Rates, latency, throughput, and the timeline. Implemented. |
 | 7 | a separate `incidentlab_viz` target | raylib. It links `incidentlab::core` and contains no simulation rules. |
 | 8 | scenario definitions | The same workload under two strategies. |
 | 9 | GoogleTest, if vendored without a network fetch, and `.github/workflows/` | Broader tests and CI. |
@@ -276,13 +304,14 @@ The Stage 2 tests are an executable with assertions, registered with CTest. Goog
 
 - **Domain** answers what a request, a service, and an event are.
 - **The Stage 2 script** answers what one fixed trace does. It is not the simulation.
-- **Presentation** prints the banner and the report.
+- **Metrics** reads a finished report. It does not run the simulation or format text.
+- **Presentation** prints the banner and the observability report.
 - **Tests** call the core directly. They do not start from `main()`.
 
 ## Decisions
 
 - Three service classes, not one class configured with strings. The accepted operation and the success text already differ, and later stages can change one service without editing the others. The virtual call is the extension point.
-- No gateway, queue, database, retry, circuit breaker, clock, or metric registry in this stage. Those need a scheduler or a failure model that does not exist yet.
+- Stage 2 did not add a gateway, queue, database, retry, circuit breaker, clock, or metric registry. Those arrived in later stages, or are still planned.
 - `Service` is non-copyable. The demo keeps concrete services on the stack and passes `Service&`.
 - `Service*` values in the engine are non-owning. The caller keeps the service objects alive.
 - `ScheduledEvent` and `Event` stay separate. One is future work. The other is a recorded fact.
