@@ -114,7 +114,8 @@ Layout make_layout(const VisualizationSnapshot& snapshot) {
     const float middle_top = layout.controls.y + layout.controls.height + 8.0F;
     const float middle_bottom = layout.footer.y - 8.0F;
     const float middle_h = std::max(180.0F, middle_bottom - middle_top);
-    const float timeline_h = std::min(220.0F, std::max(128.0F, middle_h * 0.30F));
+    const float timeline_share = height >= 860.0F ? 0.34F : 0.30F;
+    const float timeline_h = std::min(300.0F, std::max(128.0F, middle_h * timeline_share));
     layout.timeline =
         Rectangle{margin, middle_bottom - timeline_h, width - 2.0F * margin, timeline_h};
     const float body_h = layout.timeline.y - 10.0F - middle_top;
@@ -132,8 +133,7 @@ Layout make_layout(const VisualizationSnapshot& snapshot) {
     layout.reset = button_row(layout.controls, 4, 6);
     layout.speed = button_row(layout.controls, 5, 6);
 
-    layout.client = Rectangle{layout.topology.x + 24.0F,
-                               layout.topology.y + layout.topology.height * 0.42F, 88.0F, 36.0F};
+    layout.client = Rectangle{layout.topology.x + 24.0F, layout.topology.y, 88.0F, 36.0F};
     std::vector<const ServiceNodeView*> ordered(3, nullptr);
     std::vector<const ServiceNodeView*> extra;
     for (const ServiceNodeView& node : snapshot.services) {
@@ -151,19 +151,38 @@ Layout make_layout(const VisualizationSnapshot& snapshot) {
         }
     }
     placed.insert(placed.end(), extra.begin(), extra.end());
-    const float node_w = 220.0F;
-    const float node_h = roomy ? 78.0F : 70.0F;
+    const float node_w = std::min(280.0F, std::max(220.0F, layout.topology.width * 0.46F));
+    const float top_pad = roomy ? 58.0F : 52.0F;
+    const float bottom_pad = 16.0F;
+    const float min_h = roomy ? 76.0F : 68.0F;
+    const float max_h = roomy ? 96.0F : 78.0F;
+    const float count = static_cast<float>(placed.size());
+    const float usable = std::max(min_h, layout.topology.height - top_pad - bottom_pad);
+    float node_h = min_h;
+    if (count > 0.0F) {
+        const float gaps = std::max(0.0F, count - 1.0F);
+        const float raw = (usable - 12.0F * gaps) / count;
+        node_h = std::min(max_h, std::max(min_h, raw));
+    }
+    const float stack = node_h * count;
+    float gap = count <= 1.0F ? 0.0F : (usable - stack) / (count - 1.0F);
+    float block = stack + gap * std::max(0.0F, count - 1.0F);
+    if (gap > 48.0F) {
+        gap = 48.0F;
+        block = stack + gap * std::max(0.0F, count - 1.0F);
+    }
     const float node_x = layout.topology.x + layout.topology.width - node_w - 28.0F;
-    const float usable = std::max(node_h, layout.topology.height - 64.0F);
-    const float stack = node_h * static_cast<float>(placed.size());
-    const float gap = placed.size() <= 1
-                          ? 0.0F
-                          : std::max(0.0F, std::min(22.0F, (usable - stack) /
-                                                               static_cast<float>(placed.size() - 1)));
-    float y = layout.topology.y + (roomy ? 62.0F : 56.0F);
+    const float slack = std::max(0.0F, usable - block);
+    float y = layout.topology.y + top_pad + slack * 0.35F;
     for (const ServiceNodeView* node : placed) {
         layout.nodes.push_back(NodeBox{node->name, Rectangle{node_x, y, node_w, node_h}});
         y += node_h + gap;
+    }
+    if (!layout.nodes.empty()) {
+        const Rectangle& first = layout.nodes.front().bounds;
+        const Rectangle& last = layout.nodes.back().bounds;
+        const float mid = (first.y + last.y + last.height) * 0.5F;
+        layout.client.y = mid - layout.client.height * 0.5F;
     }
     return layout;
 }
@@ -326,14 +345,17 @@ void draw_topology(const Layout& layout, const VisualizationSnapshot& snapshot) 
                       static_cast<int>(box.bounds.height - 16.0F), mark);
         const float name_size = static_cast<float>(ui_text_size(UiRole::Label));
         const float detail_size = static_cast<float>(ui_text_size(UiRole::Detail));
-        ui_draw(UiRole::Label, box.bounds.x + 16.0F, box.bounds.y + 8.0F, node->name.c_str(), kText);
-        ui_draw(UiRole::Detail, box.bounds.x + 16.0F, box.bounds.y + 10.0F + name_size,
-                to_string(node->status), mark);
+        const float text_block = name_size + detail_size + detail_size + 12.0F;
+        const float text_y =
+            box.bounds.y + std::max(8.0F, (box.bounds.height - text_block) * 0.5F);
+        ui_draw(UiRole::Label, box.bounds.x + 16.0F, text_y, node->name.c_str(), kText);
+        ui_draw(UiRole::Detail, box.bounds.x + 16.0F, text_y + name_size + 4.0F, to_string(node->status),
+                mark);
         char detail[96];
         std::snprintf(detail, sizeof(detail), "%zu done   %.0f%% ok", node->completed_requests,
                       node->success_rate_percent);
-        ui_draw(UiRole::Detail, box.bounds.x + 16.0F,
-                box.bounds.y + 14.0F + name_size + detail_size, detail, kMuted);
+        ui_draw(UiRole::Detail, box.bounds.x + 16.0F, text_y + name_size + detail_size + 8.0F, detail,
+                kMuted);
     }
 }
 
@@ -347,8 +369,11 @@ void draw_metrics(const Layout& layout, const VisualizationSnapshot& snapshot) {
     const float right = layout.metrics.x + layout.metrics.width * 0.52F;
     const float left_value = left + 156.0F;
     const float right_value = right + 156.0F;
-    float y = layout.metrics.y + 14.0F + static_cast<float>(ui_text_size(UiRole::Heading));
-    const float step = static_cast<float>(metric_row_height());
+    const float content_top = 14.0F + static_cast<float>(ui_text_size(UiRole::Heading));
+    const float available = std::max(0.0F, layout.metrics.height - content_top - 16.0F);
+    const float natural = static_cast<float>(metric_row_height());
+    const float step = std::min(natural + 14.0F, std::max(natural, available / 10.0F));
+    float y = layout.metrics.y + content_top;
     char value[64];
     std::snprintf(value, sizeof(value), "%zu", global.outcomes.completed);
     draw_line_value(left, y, left_value, "Completed", value);

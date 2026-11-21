@@ -128,5 +128,15 @@ if(INCIDENTLAB_BUILD_GUI)
         target_link_libraries(incidentlab_gui PRIVATE raylib)
     endif()
     target_compile_features(incidentlab_gui PRIVATE cxx_std_17)
+    target_compile_definitions(incidentlab_gui PRIVATE
+        "INCIDENTLAB_FONT_DIR=\"${CMAKE_SOURCE_DIR}/assets/fonts\"")
+    add_custom_command(TARGET incidentlab_gui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:incidentlab_gui>/fonts
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/assets/fonts/DejaVuSans.ttf
+            ${CMAKE_SOURCE_DIR}/assets/fonts/DejaVuSans-Bold.ttf
+            ${CMAKE_SOURCE_DIR}/assets/fonts/LICENSE
+            $<TARGET_FILE_DIR:incidentlab_gui>/fonts
+        VERBATIM)
     incidentlab_apply_warnings(incidentlab_gui)
 endif()

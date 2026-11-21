@@ -334,7 +334,7 @@ cmake --build build/gui
 
 If CMake cannot find the package, pass `-Draylib_DIR=<prefix>/lib/cmake/raylib`. On a Linux machine where the distro package exists, the usual package is `libraylib-dev`. This repository does not install it. Without raylib, configuration of the GUI build stops with an error, and `cmake --preset debug` still builds the console and the tests.
 
-The window opens at 1440 by 900 and can be resized. The minimum size is 1024 by 700. The render target is 60 frames per second.
+The window opens at 1440 by 900 and can be resized. The minimum size is 1024 by 700. The render target is 60 frames per second. Labels use the DejaVu Sans files in `assets/fonts`, which the build copies next to `incidentlab_gui`. Those files are the Bitstream Vera typefaces with the DejaVu changes, and `assets/fonts/LICENSE` is their notice. A system DejaVu Sans or Liberation Sans is used when the bundled files are absent. The built-in bitmap font is only the last fallback.
 
 ### Known limits
 
@@ -346,6 +346,7 @@ The dashboard shows one scenario. It does not compare strategies, export metrics
 .
 ├── CMakeLists.txt
 ├── CMakePresets.json
+├── assets/fonts/            # DejaVu Sans for the optional window
 ├── include/incidentlab/     # public headers of the core library
 │   ├── simulation/          # clock, scheduler, engine, report
 │   ├── observability/       # metrics and the Stage 6 demo

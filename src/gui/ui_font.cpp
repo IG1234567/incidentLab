@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace incidentlab {
 namespace {
@@ -85,15 +86,29 @@ int atlas_index(int logical) {
     }
 }
 
-const char* regular_candidates[] = {
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-};
+std::vector<std::string> regular_font_paths() {
+    std::vector<std::string> paths;
+    const std::string application = GetApplicationDirectory();
+    if (!application.empty()) {
+        paths.push_back(application + "fonts/DejaVuSans.ttf");
+    }
+#ifdef INCIDENTLAB_FONT_DIR
+    paths.push_back(std::string(INCIDENTLAB_FONT_DIR) + "/DejaVuSans.ttf");
+#endif
+    const char* system_fonts[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    };
+    for (const char* path : system_fonts) {
+        paths.emplace_back(path);
+    }
+    return paths;
+}
 
 std::string bold_path_for(const std::string& regular) {
     const std::string regular_suffix = "-Regular.ttf";
@@ -177,10 +192,11 @@ void load_ui_fonts() {
 
     const float pixel_scale = framebuffer_scale();
     const bool sharp_filter = std::abs(pixel_scale - std::round(pixel_scale)) < 0.02F;
+    const std::vector<std::string> candidates = regular_font_paths();
     const char* regular = nullptr;
-    for (const char* candidate : regular_candidates) {
-        if (FileExists(candidate)) {
-            regular = candidate;
+    for (const std::string& candidate : candidates) {
+        if (FileExists(candidate.c_str())) {
+            regular = candidate.c_str();
             break;
         }
     }
