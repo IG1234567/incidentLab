@@ -1,8 +1,8 @@
 # Architecture
 
-IncidentLab is a simulator. It models service calls, queues, and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
+IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 puts the dependency direction in place and stops there. The simulation itself starts in Stage 2.
+Stage 1 fixed the dependency direction. Stage 2 adds the domain model and a fixed demonstration script. The discrete-event engine is still Stage 3.
 
 ## What exists now
 
@@ -13,20 +13,29 @@ flowchart LR
     end
 
     subgraph core [incidentlab_core]
-        Version["Version<br/>include/incidentlab/version.hpp"]
+        Version["Version"]
+        Demo["Stage 2 demo script"]
+        Domain["Request, Service, Event, EventHistory"]
     end
 
-    App -->|"links, calls"| Version
+    Tests["incidentlab_tests"]
+
+    App -->|"prints"| Version
+    App -->|"prints the report"| Demo
+    Demo --> Domain
+    Tests --> Domain
+    Tests --> Demo
 ```
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
-| `incidentlab` | Print the startup banner and return a process status. This is the presentation shell. | `incidentlab::core` |
-| `incidentlab_core` | Own reusable logic. Today that is only the build version. From Stage 2 it owns the simulation. | C++ standard library only |
+| `incidentlab` | Print the startup banner and the Stage 2 report. | `incidentlab::core` |
+| `incidentlab_core` | Version, domain types, and the fixed demonstration script. | C++ standard library only |
+| `incidentlab_tests` | Assert the domain rules and the demonstration. | `incidentlab::core` |
 
-The arrow points one way. The library does not include `iostream`, does not print the banner, and does not know which executable called it. A future window, a test, or another tool can link the same library.
+The library does not include `iostream` for the banner or the report. `src/main.cpp` formats `DemoReport`. A test calls `run_stage2_demo()` and reads the same struct. Neither path is required for the other.
 
-The version number is defined once, in `project(VERSION ...)` inside `CMakeLists.txt`. The build injects it into `src/version.cpp`. The header only exposes `current_version()` and `version_string()`.
+The version number is still defined once, in `project(VERSION ...)` inside `CMakeLists.txt`.
 
 ## Dependency rule
 
@@ -35,11 +44,97 @@ presentation  -->  incidentlab_core  -->  C++ standard library
 tests         -->  incidentlab_core
 ```
 
-Nothing in the core may depend on the console, on raylib, or on a test framework. That rule is what keeps the engine runnable without a GUI.
+Nothing in the core depends on the console, on raylib, or on the test harness.
+
+## Stage 2 class model
+
+```mermaid
+classDiagram
+    class Service {
+        <<abstract>>
+        +name() string
+        +handle(Request) ServiceResult
+    }
+    class OrderService
+    class PaymentService
+    class InventoryService
+    Service <|-- OrderService
+    Service <|-- PaymentService
+    Service <|-- InventoryService
+
+    class Request {
+        +request_id
+        +trace_id
+        +source_service
+        +target_service
+        +operation
+    }
+    class ServiceResult {
+        +status
+        +message
+    }
+    class Event {
+        +event_id
+        +request_id
+        +trace_id
+        +service_name
+        +type
+        +message
+    }
+    class EventHistory {
+        -events_
+        +record(Event)
+        +events()
+        +by_trace_id()
+        +by_request_id()
+    }
+    class DemoReport {
+        +trace_id
+        +steps
+        +history
+    }
+
+    OrderService ..> Request
+    OrderService ..> ServiceResult
+    EventHistory o-- Event
+    DemoReport *-- EventHistory
+    DemoReport --> Service : calls through the base
+    Event ..> Request : shares request_id and trace_id
+```
+
+### Inheritance
+
+`OrderService`, `PaymentService`, and `InventoryService` inherit from `Service`. Each accepts one operation and rejects every other operation with `ServiceStatus::Rejected`. The base declares the contract. The derived classes supply the behavior.
+
+`Service` deletes copying and moving so a service cannot be sliced into a base value.
+
+### Runtime polymorphism
+
+`run_stage2_demo()` stores the three services in a `Service*` array and calls `handle()` through that pointer. The caller does not switch on the service name. The dynamic type selects `OrderService::handle`, `PaymentService::handle`, or `InventoryService::handle`.
+
+### Composition
+
+`DemoReport` has an `EventHistory`. `EventHistory` has a `std::vector<Event>`. The history is a part of the report, not a parent class. The vector is private. `record()` appends. `events()`, `by_trace_id()`, and `by_request_id()` only read. Filters use `std::copy_if` and keep insertion order.
+
+### Request and Event
+
+Both are value types. A constructor checks the required strings and throws `std::invalid_argument` when one is empty. After that, the fields are public so call sites stay readable. There are no getters and setters.
+
+An unsupported operation does not throw. `handle()` returns `ServiceResult` with `ServiceStatus::Rejected`. Exceptions are for a request or event that was never valid. A rejected operation is a normal result.
+
+`source_service` may be empty. The other request strings may not. An event message may be empty. The event id, request id, trace id, and service name may not.
+
+### Correlation
+
+`request_id` names one call. `trace_id` names the workflow that call belongs to. The demonstration uses `TRACE-001` for `REQ-001`, `REQ-002`, and `REQ-003`. `EventHistory::by_trace_id("TRACE-001")` returns every event from that workflow. `by_request_id` returns the events of one call.
+
+Event ids in the demonstration are `EVT-001` onward, allocated by a counter. The same script produces the same ids. There is no clock and no random source.
+
+### What the demonstration is
+
+`run_stage2_demo()` is a fixed script: create the trace, call the three services, store six events. It is not a scheduler. Stage 3 can delete `stage2_demo.hpp` and `stage2_demo.cpp` without changing `Service`, `Request`, or `Event`.
 
 ## How later stages plug in
-
-The same library grows. New code is added as focused types behind the existing target. `src/main.cpp` stays a shell: it will ask the engine to run and then display the result. It will not decide how a payment call fails.
 
 ```mermaid
 flowchart TB
@@ -57,12 +152,10 @@ flowchart TB
         Domain["Domain models, Stage 2"]
     end
 
-    Tests["Tests, Stage 9"]
+    Tests["Domain tests now<br/>CI in Stage 9"]
 
-    Console --> Engine
-    Console --> Metrics
+    Console --> Domain
     Viz --> Engine
-    Viz --> Metrics
     Scenarios --> Engine
     Engine --> Resilience
     Engine --> Failures
@@ -71,54 +164,32 @@ flowchart TB
     Failures --> Domain
     Metrics --> Engine
     Tests --> Domain
-    Tests --> Engine
 ```
 
-Planned homes, not created yet:
-
-| Stage | Added under | Role |
+| Stage | Where it will land | Role |
 | --- | --- | --- |
-| 2 | `include/incidentlab/domain/`, `src/domain/` | Requests, events, services, the in-memory queue and stores. Value types and small classes. |
-| 3 | `include/incidentlab/simulation/`, `src/simulation/` | Drive one scenario forward. No drawing. |
-| 4 | failure policies used by the engine | Timeouts, crashes, slow calls, dropped messages. The engine asks a policy; it does not hard-code one outage. |
-| 5 | resilience strategies composed into callers | Retry and circuit breaker as interchangeable behavior, held by composition. |
-| 6 | metrics read by presentation | Counters and health. The engine records them. The UI only reads them. |
-| 7 | a separate `incidentlab_viz` target | raylib drawing. It links `incidentlab::core` and contains no simulation rules. |
-| 8 | scenario definitions | Run the same workload under two strategies and compare the metrics. |
-| 9 | `tests/`, `.github/workflows/` | GoogleTest against the library. The workflow builds Debug and Release. |
-| 10 | user-facing docs and a release | Portfolio write-up. No new runtime behavior required for the architecture. |
+| 2 | `include/incidentlab/`, `src/`, `tests/` | Requests, services, events, history, and the fixed demo. Present now. |
+| 3 | `include/incidentlab/simulation/`, `src/simulation/` | Schedule calls. No drawing. Replaces the fixed script. |
+| 4 | failure policies the engine consults | Timeouts, crashes, slow calls, dropped messages. |
+| 5 | strategies composed into callers | Retry and circuit breaker. |
+| 6 | metrics the engine records | Counters and health. The UI only reads them. |
+| 7 | a separate `incidentlab_viz` target | raylib. It links `incidentlab::core` and contains no simulation rules. |
+| 8 | scenario definitions | The same workload under two strategies. |
+| 9 | GoogleTest, if vendored without a network fetch, and `.github/workflows/` | Broader tests and CI. |
+| 10 | release notes and a license | Portfolio write-up. |
 
-Directories `tests/`, `assets/`, and `.github/workflows/` are omitted on purpose until those stages. Git does not track empty folders, and empty placeholders would look like unfinished features.
+The Stage 2 tests are an executable with assertions, registered with CTest. GoogleTest is not downloaded. A build must succeed with no network access.
 
 ## Separation of concerns
 
-- **Domain** answers "what exists": a service, a request, a queue message.
-- **Simulation** answers "what happens next" when a request is submitted or a failure is injected.
-- **Infrastructure**, when a seam is actually needed, answers "where time and chance come from" (a clock, a random source). Those will be small types inside the core, not a network or a database server.
-- **Presentation** answers "what the user sees". Console now, drawing in Stage 7.
-- **Tests** call the core directly. They do not launch the window.
+- **Domain** answers what a request, a service, and an event are.
+- **The Stage 2 script** answers what one fixed trace does. It is not the simulation.
+- **Presentation** prints the banner and the report.
+- **Tests** call the core directly. They do not start from `main()`.
 
-## OOP, applied only where it pays off
+## Decisions
 
-Stage 1 has no class hierarchy. `Version` is an aggregate of three integers because it has nothing to hide. Inheritance starts when two types share a contract and differ in behavior.
-
-The shapes that fit later stages:
-
-- **Encapsulation.** A circuit breaker's failure count stays private. Callers see `allow_call()` and `record_result()`, not the counter.
-- **Abstraction.** The engine depends on a failure policy, not on a specific outage.
-- **Inheritance and polymorphism.** A service contract such as "handle this request" can have order, payment, and inventory implementations. The engine stores them by that contract.
-- **Composition.** The API gateway *has* routes and a caller. It is not a subclass of every service it talks to. A caller *has* a retry policy and a circuit breaker.
-- **Exceptions.** A failed step that the simulation cannot continue (unknown service, broken scenario file) is reported with an exception and a clear message. Ordinary simulated failures, such as a declined payment, are results, not exceptions.
-- **STL.** `std::vector`, `std::deque`, and `std::unordered_map` hold services, the event queue, and metrics. No hand-written containers.
-
-SOLID follows the same restraint. A single-purpose type (S), a call site that depends on a policy rather than a concrete outage (D), and extension by a new policy instead of editing the engine (O) matter once those types exist. They are not introduced as empty base classes in Stage 1.
-
-## What the core library is for
-
-`incidentlab_core` is a static library. It has no `main`. The executable `incidentlab` links it and is the only thing you run.
-
-That split is the extension point:
-
-- Stage 7 can add a second executable for the window without copying the engine.
-- Stage 9 can link tests to the library without starting the console program.
-- The console program can stay small enough to read in one sitting.
+- Three service classes, not one class configured with strings. The accepted operation and the success text already differ, and later stages can change one service without editing the others. The virtual call is the extension point.
+- No gateway, queue, database, retry, circuit breaker, clock, or metric registry in this stage. Those need a scheduler or a failure model that does not exist yet.
+- `Service` is non-copyable. The demo keeps concrete services on the stack and passes `Service&`.
+- Event ids are formatted in the demo, not inside `Event`. `Event` only checks that the id it was given is non-empty.

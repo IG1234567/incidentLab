@@ -2,26 +2,27 @@
 
 IncidentLab is a distributed systems failure simulator for learning how a small microservice architecture behaves when calls time out, retries stack up, and circuit breakers open.
 
-The whole system runs in one process. Services, queues, and databases are models. Nothing is deployed, and nothing listens on a network.
+The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 1 of 10 is implemented.** The project configures, builds, and prints a startup banner. No simulation behavior exists yet.
+**Stage 2 of 10 is implemented.** The program prints the Stage 1 banner, then runs one fixed trace through three services and prints the event history. Failure injection, retries, queues, and the window are not in the build yet.
 
 ## Implemented features
 
-- C++17 CMake build with a core library and a console executable
+- C++17 CMake build with a core library, a console executable, and a CTest target
 - Debug and Release configurations, without assuming a particular compiler
 - One version number, owned by the build and reported at startup
-- Architecture boundaries that later stages can extend (see [docs/architecture.md](docs/architecture.md))
+- Domain model: `Request`, `Service`, `OrderService`, `PaymentService`, `InventoryService`, `ServiceResult`, `Event`, `EventHistory`
+- A fixed Stage 2 demonstration: one trace, three requests, six events
+- Automated tests for validation, service behavior, history filters, and the demonstration
 
 ## Planned features
 
 These are not in the build yet.
 
-- A simulated API gateway, order service, payment service, inventory service, event queue, and databases
-- Request generation and visible service-to-service calls
+- A simulated API gateway, event queue, and databases
+- A discrete-event simulation clock and scheduler
 - Failure injection
-- Retries and circuit breakers
-- Queue processing and a dead-letter queue
+- Retries, circuit breakers, and a dead-letter queue
 - Health and metrics
 - Side-by-side comparison of resilience strategies
 - An interactive architecture view (raylib)
@@ -31,11 +32,31 @@ These are not in the build yet.
 
 | Now | Later, in the named stage |
 | --- | --- |
-| C++17, CMake, the C++ standard library | GoogleTest (Stage 9) |
+| C++17, CMake, CTest, the C++ standard library | GoogleTest (Stage 9, only if it can be vendored without a download) |
 | Git | raylib (Stage 7) |
 |  | GitHub Actions (Stage 9) |
 
-No other dependencies are planned. The simulation must keep working without the window.
+The Stage 2 tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window.
+
+## Domain model
+
+A `Request` is one call. It carries `request_id`, `trace_id`, `source_service`, `target_service`, and `operation`. Construction throws `std::invalid_argument` when the request id, trace id, target service, or operation is empty. The source service may be empty.
+
+`request_id` names that single call. `trace_id` names the workflow the call belongs to. In the demonstration, `REQ-001`, `REQ-002`, and `REQ-003` all use `TRACE-001`. Filtering the history by `TRACE-001` returns every event from the workflow. Filtering by `REQ-002` returns only that call's events.
+
+`Service` is an abstract base with `name()` and `handle()`. The three concrete services inherit from it:
+
+| Service | Operation | Success text |
+| --- | --- | --- |
+| `OrderService` | `CreateOrder` | `Order created successfully` |
+| `PaymentService` | `ProcessPayment` | `Payment processed successfully` |
+| `InventoryService` | `ReserveInventory` | `Inventory reserved successfully` |
+
+Any other operation returns `ServiceStatus::Rejected`. That is a normal result, not an exception.
+
+`Event` records one fact about a request: an id, the request id, the trace id, the service name, a type (`RequestReceived`, `RequestCompleted`, or `RequestRejected`), and a message. `EventHistory` stores events in insertion order and can filter them. The demonstration is a fixed script in `run_stage2_demo()`. It is not the scheduler. Stage 3 replaces that script.
+
+Details and the class diagram are in [docs/architecture.md](docs/architecture.md).
 
 ## Architecture
 
@@ -48,15 +69,16 @@ flowchart LR
     end
 
     subgraph core [incidentlab_core]
-        Version["Version"]
+        Demo["Stage 2 demo"]
+        Domain["Services, requests, events"]
     end
 
-    App -->|"links"| Version
+    Tests["incidentlab_tests"]
+
+    App --> Demo
+    Demo --> Domain
+    Tests --> Domain
 ```
-
-Today the library only reports its version. From Stage 2 onward the domain model and the simulation engine live in that same library. The window, when it arrives, will be a separate target that links the library and draws what the engine already computed.
-
-The dependency rule, the stage-by-stage map, and the reason there is no class hierarchy yet are written up in [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
@@ -117,6 +139,24 @@ cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
 
 In-source builds (`cmake .` in the repository root) are rejected. Always pass a separate build directory with `-B`.
 
+## Test
+
+The domain tests are registered with CTest. From the repository root, after a build:
+
+```bash
+ctest --test-dir build/debug --output-on-failure
+ctest --test-dir build/release --output-on-failure
+```
+
+Visual Studio multi-config:
+
+```bat
+ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Release --output-on-failure
+```
+
+`incidentlab_domain` is one CTest test. It runs every domain case in `tests/domain_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
+
 ## Run
 
 Single-config preset (Ninja, Makefiles, or MinGW):
@@ -140,43 +180,77 @@ Distributed Systems Failure Simulator
 Version 0.1.0
 
 Status: Application initialized successfully.
+
+========== STAGE 2 DEMO ==========
+
+Trace: TRACE-001
+
+[REQ-001] OrderService
+Operation: CreateOrder
+Status: SUCCESS
+
+[REQ-002] PaymentService
+Operation: ProcessPayment
+Status: SUCCESS
+
+[REQ-003] InventoryService
+Operation: ReserveInventory
+Status: SUCCESS
+
+========== EVENT HISTORY ==========
+
+[EVT-001] REQ-001 RequestReceived
+[EVT-002] REQ-001 RequestCompleted
+
+[EVT-003] REQ-002 RequestReceived
+[EVT-004] REQ-002 RequestCompleted
+
+[EVT-005] REQ-003 RequestReceived
+[EVT-006] REQ-003 RequestCompleted
+
+Total Requests: 3
+Total Events: 6
+
+Stage 2 demonstration completed successfully.
 ```
 
-The process exits with status 0. If the banner cannot be written, it prints an error to standard error and exits with status 1.
+The process exits with status 0. If the report cannot be written, it prints an error to standard error and exits with status 1.
 
 ## Project layout
 
 ```text
 .
-├── CMakeLists.txt          # library target + executable target
-├── CMakePresets.json       # debug and release presets
-├── include/incidentlab/    # public headers of the core library
-│   └── version.hpp
+├── CMakeLists.txt
+├── CMakePresets.json
+├── include/incidentlab/     # public headers of the core library
 ├── src/
-│   ├── main.cpp            # console presentation
-│   └── version.cpp         # library implementation
+│   ├── main.cpp             # banner and report formatting
+│   └── *.cpp                # library implementation
+├── tests/
+│   ├── test_harness.hpp
+│   └── domain_tests.cpp
 ├── docs/architecture.md
 └── README.md
 ```
 
-`tests/`, `assets/`, and `.github/workflows/` are added in the stages that need them.
+`assets/` and `.github/workflows/` are added in the stages that need them.
 
 ## Development roadmap
 
 | Stage | Focus | Status |
 | --- | --- | --- |
 | 1 | Architecture and project setup | Implemented |
-| 2 | Service and event models | Planned |
+| 2 | Service and event models | Implemented |
 | 3 | Simulation engine | Planned |
 | 4 | Failure injection | Planned |
 | 5 | Resilience patterns | Planned |
 | 6 | Metrics and observability | Planned |
 | 7 | Interactive visualization | Planned |
 | 8 | Scenario comparison | Planned |
-| 9 | Automated testing and CI | Planned |
+| 9 | Extended testing and CI | Planned |
 | 10 | Documentation and portfolio release | Planned |
 
-Stage 2 starts only after Stage 1 is reviewed: domain types for services, requests, and events, still with no failure injection and no window.
+Stage 3, when approved, adds a discrete-event scheduler. The Stage 2 script can be removed without changing the service contract.
 
 ## License
 

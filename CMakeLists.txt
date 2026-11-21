@@ -32,6 +32,13 @@ endfunction()
 
 add_library(incidentlab_core STATIC
     src/version.cpp
+    src/request.cpp
+    src/order_service.cpp
+    src/payment_service.cpp
+    src/inventory_service.cpp
+    src/event.cpp
+    src/event_history.cpp
+    src/stage2_demo.cpp
 )
 add_library(incidentlab::core ALIAS incidentlab_core)
 
@@ -58,3 +65,16 @@ add_executable(incidentlab
 target_link_libraries(incidentlab PRIVATE incidentlab::core)
 target_compile_features(incidentlab PRIVATE cxx_std_17)
 incidentlab_apply_warnings(incidentlab)
+
+# In-tree assertions registered with CTest. GoogleTest is not fetched:
+# the build must succeed without a network download.
+enable_testing()
+
+add_executable(incidentlab_tests
+    tests/domain_tests.cpp
+)
+target_link_libraries(incidentlab_tests PRIVATE incidentlab::core)
+target_include_directories(incidentlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_features(incidentlab_tests PRIVATE cxx_std_17)
+incidentlab_apply_warnings(incidentlab_tests)
+add_test(NAME incidentlab_domain COMMAND incidentlab_tests)
