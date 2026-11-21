@@ -511,8 +511,8 @@ INCIDENTLAB_TEST(per_service_statistics_are_independent) {
     engine.run();
     const incidentlab::SimulationReport report = engine.report();
     const ObservabilityReport metrics = MetricsCalculator::calculate(report);
-    const incidentlab::ServiceMetrics& order = find_service(metrics, "OrderService");
-    const incidentlab::ServiceMetrics& payment = find_service(metrics, "PaymentService");
+    const auto order = find_service(metrics, "OrderService");
+    const auto payment = find_service(metrics, "PaymentService");
     EXPECT(order.outcomes.successful == 2);
     EXPECT(order.success_rate_percent == 100.0);
     EXPECT(order.failure_rate_percent == 0.0);
