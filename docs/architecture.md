@@ -29,7 +29,7 @@ flowchart LR
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
-| `incidentlab` | Print the startup banner and the Stage 3 report. | `incidentlab::core` |
+| `incidentlab` | Print the startup banner and the Stage 4 report. | `incidentlab::core` |
 | `incidentlab_core` | Version, domain types, the Stage 2 script, and the simulation engine. | C++ standard library only |
 | `incidentlab_tests` | Assert the domain rules and the simulation. | `incidentlab::core` |
 
@@ -158,7 +158,7 @@ flowchart TB
 | Type | Owns | Does not own |
 | --- | --- | --- |
 | `SimulationClock` | The current virtual millisecond. | The scheduler. |
-| `ScheduledEvent` | A time, a sequence number, and a `Request` copy. | A callback. |
+| `ScheduledEvent` | A time, a sequence number, a start or finish action, and a `Request` copy. | A callback. |
 | `EventScheduler` | The pending queue and the next sequence number. | The clock. The engine passes `now`. |
 | `SimulationEngine` | The clock, the scheduler, the history, timestamps, and execution records. | The `Service` objects. It stores `Service*`. |
 | `SimulationReport` | A snapshot copied from the engine at one moment. | A second log that keeps growing. |
@@ -167,11 +167,11 @@ flowchart TB
 
 Routing reads `request.target_service` and finds that map entry. `handle()` is virtual, so `OrderService`, `PaymentService`, and `InventoryService` are selected by the dynamic type. There is no switch on the class. A missing name does not stop the run: the engine records `RequestReceived`, then `RequestRejected` with `Unknown service: <name>`.
 
-For each executed request the history gains two `Event` values, and `event_times` gains the same virtual time twice. `Event` itself has no time field, so Stage 2 code is unchanged. The report copies `history` and `event_times` together. Index `i` in both refers to the same fact.
+A request that finishes at its start time adds two events at that same time. A dropped request adds only `RequestDropped`. A delayed outcome adds `RequestReceived` at the start and the outcome later. `event_times` stays aligned with that history. `Event` itself has no time field, so Stage 2 code is unchanged. The report copies `history` and `event_times` together. Index `i` in both refers to the same fact.
 
 `std::priority_queue` is a max-heap. The comparator treats a later time, then a larger sequence number, as smaller, so `top()` is the earliest insertion. Scheduling and pop are O(log N). Service lookup is O(1) on average. Processing N queued requests is O(N log N). The sequence counter is `uint64_t`. The scheduler throws `std::overflow_error` before the counter would wrap and scramble equal-time order.
 
-`run_next(max_requests)` finishes at most that many requests. A start whose outcome is recorded later does not count as finished. Zero executes none. `run()` drains every start and finish action. Time and history stay as they are between calls.
+`run_next(max_requests)` finishes at most that many requests. A start whose outcome is recorded later does not count as finished. Zero executes none. `run()` drains every start and finish action. Time and history stay as they are between calls. There is no public single-action step. Stage 7 may need one to draw the timeline action by action.
 
 A zero-delay outcome is recorded before the engine reads the next queued action, so Stage 3 order is unchanged. A later outcome is a `Finish` action on the same queue. If `handle` throws, the start stays queued, nothing new is recorded, and the exception propagates. A finish does not call `handle`. If committing it throws, the partial record is rolled back and the finish stays queued.
 

@@ -52,7 +52,7 @@ A discrete-event simulation does not step through every millisecond. It keeps a 
 
 `ScheduledEvent` means "run this request later." `Event` means "this already happened." They are different types. Virtual time is stored beside the history, in `SimulationReport::event_times`, at the same index as `history.events()`. The history itself is unchanged from Stage 2.
 
-`run_next(n)` finishes at most n requests. `run_next(0)` does nothing. `run()` drains every queued start and finish. If a service throws, that start stays queued, nothing new is recorded for it, and the exception is not swallowed. A simulated failure is a normal outcome. It does not throw.
+`run_next(n)` finishes at most n requests. `run_next(0)` does nothing. `run()` drains every queued start and finish. If a service throws, that start stays queued, nothing new is recorded for it, and the exception is not swallowed. A simulated failure is a normal outcome. It does not throw. `run_next` does not step one scheduler action. Stage 7 may need that kind of step to draw the timeline.
 
 With no failure configuration, a request is received and completed at its scheduled time. A slow response, a delayed failure, or a timeout leaves a finish action on the same queue, so other requests can run before that outcome. The clock never moves backward. Virtual delays do not sleep.
 
@@ -76,7 +76,7 @@ A `Request` is one call. It carries `request_id`, `trace_id`, `source_service`, 
 
 Any other operation returns `ServiceStatus::Rejected`. That is a normal result, not an exception.
 
-`Event` records one fact about a request: an id, the request id, the trace id, the service name, a type (`RequestReceived`, `RequestCompleted`, or `RequestRejected`), and a message. `EventHistory` stores events in insertion order and can filter them. The demonstration is a fixed script in `run_stage2_demo()`. It is not the scheduler. Stage 3 replaces that script.
+`Event` records one fact about a request: an id, the request id, the trace id, the service name, a type, and a message. The types are `RequestReceived`, `RequestCompleted`, `RequestRejected`, `RequestFailed`, `RequestTimedOut`, and `RequestDropped`. `EventHistory` stores events in insertion order and can filter them. The demonstration is a fixed script in `run_stage2_demo()`. It is not the scheduler. Stage 3 replaces that script.
 
 Details and the class diagram are in [docs/architecture.md](docs/architecture.md).
 
@@ -91,15 +91,17 @@ flowchart LR
     end
 
     subgraph core [incidentlab_core]
-        Demo["Stage 2 demo"]
+        Demo["Stage 4 demo"]
+        Engine["Simulation engine"]
         Domain["Services, requests, events"]
     end
 
     Tests["incidentlab_tests"]
 
     App --> Demo
-    Demo --> Domain
-    Tests --> Domain
+    Demo --> Engine
+    Engine --> Domain
+    Tests --> Engine
 ```
 
 ## Requirements

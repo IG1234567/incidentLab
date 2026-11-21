@@ -18,9 +18,10 @@ void EventScheduler::schedule(Request request, SimulationClock::Time scheduled_t
         throw std::overflow_error("EventScheduler sequence number overflow");
     }
 
-    const std::uint64_t sequence = next_sequence_;
+    // Increment only after the push. A throw from the queue then leaves the sequence unused
+    // and the scheduler unchanged.
+    queue_.push(ScheduledEvent{scheduled_time, next_sequence_, std::move(request), action});
     ++next_sequence_;
-    queue_.push(ScheduledEvent{scheduled_time, sequence, std::move(request), action});
 }
 
 std::optional<ScheduledEvent> EventScheduler::pop_next() {

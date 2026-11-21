@@ -71,6 +71,25 @@ public:
     }
 };
 
+class FailOnceService : public incidentlab::Service {
+public:
+    explicit FailOnceService(std::string name) : name_(std::move(name)) {}
+
+    std::string name() const override { return name_; }
+
+    incidentlab::ServiceResult handle(const incidentlab::Request&) override {
+        if (!thrown_) {
+            thrown_ = true;
+            throw std::runtime_error("service failed once");
+        }
+        return incidentlab::ServiceResult{incidentlab::ServiceStatus::Success, "recovered"};
+    }
+
+private:
+    std::string name_;
+    bool thrown_ = false;
+};
+
 }  // namespace
 
 INCIDENTLAB_TEST(failure_injection_is_disabled_by_default) {
@@ -346,18 +365,19 @@ INCIDENTLAB_TEST(timeout_and_same_timestamp_follow_sequence_order) {
     engine.schedule_request(make_request("REQ-A", "PaymentService", "ProcessPayment"), 10);
     engine.schedule_request(make_request("REQ-B", "OrderService", "CreateOrder"), 50);
     engine.run();
-    const auto& events = engine.report().history.events();
+    const auto report = engine.report();
+    const auto& events = report.history.events();
     EXPECT(events[0].request_id == "REQ-A");
     EXPECT(events[0].type == incidentlab::EventType::RequestReceived);
-    EXPECT(engine.report().event_times[0] == 10);
+    EXPECT(report.event_times[0] == 10);
     EXPECT(events[1].request_id == "REQ-B");
     EXPECT(events[1].type == incidentlab::EventType::RequestReceived);
     EXPECT(events[2].request_id == "REQ-B");
     EXPECT(events[2].type == incidentlab::EventType::RequestCompleted);
-    EXPECT(engine.report().event_times[2] == 50);
+    EXPECT(report.event_times[2] == 50);
     EXPECT(events[3].request_id == "REQ-A");
     EXPECT(events[3].type == incidentlab::EventType::RequestTimedOut);
-    EXPECT(engine.report().event_times[3] == 50);
+    EXPECT(report.event_times[3] == 50);
 }
 
 INCIDENTLAB_TEST(overlapping_requests_stay_in_chronological_order) {
@@ -551,6 +571,103 @@ INCIDENTLAB_TEST(none_removes_a_failure_policy) {
     engine.schedule_request(make_request("REQ-001", "PaymentService", "ProcessPayment"), 10);
     engine.run();
     EXPECT(engine.report().successful_requests == 1);
+}
+
+INCIDENTLAB_TEST(slow_response_throw_does_not_schedule_a_finish) {
+    FailOnceService orders{"OrderService"};
+    incidentlab::SimulationEngine engine;
+    engine.register_service(orders);
+    engine.configure_failure(
+        "OrderService",
+        incidentlab::FailureConfig{incidentlab::FailureType::SlowResponse, 40, 0, 1});
+    engine.schedule_request(make_request("REQ-001", "OrderService", "CreateOrder"), 10);
+    expect_throws<std::runtime_error>([&engine] { engine.run(); });
+
+    const incidentlab::SimulationReport failed = engine.report();
+    EXPECT(failed.pending_requests == 1);
+    EXPECT(failed.in_progress_requests == 0);
+    EXPECT(failed.processed_requests == 0);
+    EXPECT(failed.history.size() == 0);
+    EXPECT(failed.event_times.size() == 0);
+    EXPECT(failed.current_time == 0);
+
+    engine.run();
+    const incidentlab::SimulationReport report = engine.report();
+    EXPECT(report.successful_requests == 1);
+    EXPECT(report.processed_requests == 1);
+    EXPECT(report.in_progress_requests == 0);
+    EXPECT(report.pending_requests == 0);
+    EXPECT(report.history.size() == 2);
+    EXPECT(report.event_times.size() == 2);
+    EXPECT(report.event_times[0] == 10);
+    EXPECT(report.event_times[1] == 50);
+    EXPECT(report.history.events()[0].type == incidentlab::EventType::RequestReceived);
+    EXPECT(report.history.events()[1].type == incidentlab::EventType::RequestCompleted);
+    EXPECT(report.current_time == 50);
+}
+
+INCIDENTLAB_TEST(in_flight_request_survives_a_later_exception) {
+    incidentlab::OrderService orders;
+    FailOnceService payments{"PaymentService"};
+    incidentlab::SimulationEngine engine;
+    engine.register_service(orders);
+    engine.register_service(payments);
+    engine.configure_failure(
+        "OrderService",
+        incidentlab::FailureConfig{incidentlab::FailureType::SlowResponse, 100, 0, 1});
+    engine.schedule_request(make_request("REQ-001", "OrderService", "CreateOrder"), 10);
+    engine.schedule_request(make_request("REQ-002", "PaymentService", "ProcessPayment"), 40);
+    expect_throws<std::runtime_error>([&engine] { engine.run(); });
+
+    const incidentlab::SimulationReport midway = engine.report();
+    EXPECT(midway.in_progress_requests == 1);
+    EXPECT(midway.pending_requests == 1);
+    EXPECT(midway.processed_requests == 0);
+    EXPECT(midway.successful_requests == 0);
+    EXPECT(midway.history.size() == 1);
+    EXPECT(midway.event_times.size() == 1);
+    EXPECT(midway.event_times[0] == 10);
+    EXPECT(midway.history.events()[0].request_id == "REQ-001");
+    EXPECT(midway.current_time == 10);
+
+    engine.run();
+    const incidentlab::SimulationReport report = engine.report();
+    EXPECT(report.processed_requests == 2);
+    EXPECT(report.successful_requests == 2);
+    EXPECT(report.in_progress_requests == 0);
+    EXPECT(report.pending_requests == 0);
+    EXPECT(report.history.size() == 4);
+    EXPECT(report.history.size() == report.event_times.size());
+    EXPECT(report.history.by_request_id("REQ-001").size() == 2);
+    EXPECT(report.event_times.back() == 110);
+    EXPECT(report.current_time == 110);
+    for (std::size_t index = 1; index < report.event_times.size(); ++index) {
+        EXPECT(report.event_times[index] >= report.event_times[index - 1]);
+    }
+}
+
+INCIDENTLAB_TEST(run_next_zero_does_not_start_a_configured_timeout) {
+    incidentlab::PaymentService payments;
+    incidentlab::SimulationEngine engine;
+    engine.register_service(payments);
+    engine.configure_failure("PaymentService",
+                             incidentlab::FailureConfig{incidentlab::FailureType::Timeout, 200, 100,
+                                                        1});
+    engine.schedule_request(make_request("REQ-002", "PaymentService", "ProcessPayment"), 30);
+    EXPECT(engine.run_next(0) == 0);
+    const incidentlab::SimulationReport idle = engine.report();
+    EXPECT(idle.pending_requests == 1);
+    EXPECT(idle.in_progress_requests == 0);
+    EXPECT(idle.processed_requests == 0);
+    EXPECT(idle.history.size() == 0);
+    EXPECT(idle.current_time == 0);
+
+    EXPECT(engine.run_next(1) == 1);
+    const incidentlab::SimulationReport report = engine.report();
+    EXPECT(report.timed_out_requests == 1);
+    EXPECT(report.processed_requests == 1);
+    EXPECT(report.in_progress_requests == 0);
+    EXPECT(report.current_time == 130);
 }
 
 INCIDENTLAB_TEST(scheduler_keeps_start_before_a_later_same_time_finish) {
