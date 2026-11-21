@@ -22,6 +22,15 @@ public:
     /// The earliest pending request, or nullopt when nothing is waiting.
     std::optional<ScheduledEvent> pop_next();
 
+    /// The earliest pending request. It stays queued.
+    /// Throws std::logic_error when the scheduler is empty.
+    const ScheduledEvent& next() const;
+
+    /// Removes the earliest pending request. Does nothing when the scheduler is empty.
+    ///
+    /// The engine calls this only after that request has been committed.
+    void discard_next() noexcept;
+
     bool has_pending() const noexcept;
     std::size_t pending_count() const noexcept;
 

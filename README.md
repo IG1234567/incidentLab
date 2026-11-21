@@ -51,7 +51,7 @@ A discrete-event simulation does not step through every millisecond. It keeps a 
 
 `ScheduledEvent` means "run this request later." `Event` means "this already happened." They are different types. Virtual time is stored beside the history, in `SimulationReport::event_times`, at the same index as `history.events()`. The history itself is unchanged from Stage 2.
 
-`run_next(n)` executes at most n queued requests and leaves the rest, the clock, and the history in place. `run_next(0)` does nothing. `run()` finishes whatever is still queued.
+`run_next(n)` executes at most n queued requests and leaves the rest, the clock, and the history in place. `run_next(0)` does nothing. `run()` finishes whatever is still queued. If a service throws, that request stays queued, nothing is recorded for it, and the exception is not swallowed. A normal rejected result is still `RequestRejected`.
 
 The console calls `run_stage3_demo()`. That function schedules Inventory at 50 ms, Order at 10 ms, and Payment at 30 ms, then asks the engine to run. The printed order is 10, then 30, then 50. `run_stage2_demo()` is still in the library for the original tests. The console no longer calls it.
 

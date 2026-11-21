@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <iomanip>
-#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -34,12 +33,11 @@ void SimulationEngine::schedule_request(Request request, SimulationClock::Time s
 
 std::size_t SimulationEngine::run_next(std::size_t max_requests) {
     std::size_t executed = 0;
-    while (executed < max_requests) {
-        std::optional<ScheduledEvent> next = scheduler_.pop_next();
-        if (!next.has_value()) {
-            break;
-        }
-        execute(*next);
+    while (executed < max_requests && scheduler_.has_pending()) {
+        // Leave the request queued until execute() has committed it. A throw from the
+        // service then keeps the request, the clock, and the history as they were.
+        execute(scheduler_.next());
+        scheduler_.discard_next();
         ++executed;
     }
     return executed;
@@ -65,38 +63,89 @@ SimulationReport SimulationEngine::report() const {
 }
 
 void SimulationEngine::execute(const ScheduledEvent& scheduled) {
-    clock_.advance_to(scheduled.scheduled_time);
+    if (scheduled.scheduled_time < clock_.now()) {
+        throw std::invalid_argument(
+            "cannot execute a request at " + std::to_string(scheduled.scheduled_time) +
+            " ms before simulation time " + std::to_string(clock_.now()) + " ms");
+    }
 
-    const Request& request = scheduled.request;
+    // Copy before handle(). The service must not need the queued object to stay put,
+    // and nothing below may run if copying or the service call throws.
+    const SimulationClock::Time time = scheduled.scheduled_time;
+    const Request request = scheduled.request;
+
     const auto found = services_.find(request.target_service);
     Service* const service = found == services_.end() ? nullptr : found->second;
-    const std::string service_name = service == nullptr ? request.target_service : service->name();
-
-    record(Event{format_event_id(history_.size() + 1), request.request_id, request.trace_id,
-                 service_name, EventType::RequestReceived, "Request received"});
+    std::string service_name = request.target_service;
+    if (service != nullptr) {
+        service_name = service->name();
+    }
 
     ServiceResult result{ServiceStatus::Rejected, "Unknown service: " + request.target_service};
     if (service != nullptr) {
         result = service->handle(request);
     }
 
-    const EventType outcome = result.status == ServiceStatus::Success ? EventType::RequestCompleted
-                                                                      : EventType::RequestRejected;
-    record(Event{format_event_id(history_.size() + 1), request.request_id, request.trace_id,
-                 service_name, outcome, result.message});
+    const bool succeeded = result.status == ServiceStatus::Success;
+    const EventType outcome =
+        succeeded ? EventType::RequestCompleted : EventType::RequestRejected;
+    Event received{format_event_id(history_.size() + 1), request.request_id, request.trace_id,
+                   service_name, EventType::RequestReceived, "Request received"};
+    Event finished{format_event_id(history_.size() + 2), request.request_id, request.trace_id,
+                   service_name, outcome, result.message};
+    ExecutionRecord execution{time, request.request_id, request.trace_id, service_name,
+                              request.operation, std::move(result)};
 
-    if (result.status == ServiceStatus::Success) {
-        ++successful_requests_;
-    } else {
-        ++rejected_requests_;
+    // Room for the commit, so the appends below do not reallocate.
+    event_times_.reserve(event_times_.size() + 2);
+    executions_.reserve(executions_.size() + 1);
+    history_.reserve(history_.size() + 2);
+
+    const std::size_t events_before = history_.size();
+    const std::size_t times_before = event_times_.size();
+    const std::size_t executions_before = executions_.size();
+    bool counted = false;
+    try {
+        record(std::move(received), time);
+        record(std::move(finished), time);
+        executions_.push_back(std::move(execution));
+        if (succeeded) {
+            ++successful_requests_;
+        } else {
+            ++rejected_requests_;
+        }
+        counted = true;
+        // Checked above: this time is not earlier than now, so advance_to does not throw.
+        clock_.advance_to(time);
+    } catch (...) {
+        if (counted) {
+            if (succeeded) {
+                --successful_requests_;
+            } else {
+                --rejected_requests_;
+            }
+        }
+        while (executions_.size() > executions_before) {
+            executions_.pop_back();
+        }
+        while (event_times_.size() > times_before) {
+            event_times_.pop_back();
+        }
+        while (history_.size() > events_before) {
+            history_.drop_last();
+        }
+        throw;
     }
-    executions_.push_back(ExecutionRecord{clock_.now(), request.request_id, request.trace_id,
-                                          service_name, request.operation, result});
 }
 
-void SimulationEngine::record(Event event) {
-    event_times_.push_back(clock_.now());
-    history_.record(std::move(event));
+void SimulationEngine::record(Event event, SimulationClock::Time time) {
+    event_times_.push_back(time);
+    try {
+        history_.record(std::move(event));
+    } catch (...) {
+        event_times_.pop_back();
+        throw;
+    }
 }
 
 }  // namespace incidentlab

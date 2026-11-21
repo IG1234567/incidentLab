@@ -136,7 +136,7 @@ Event ids in the demonstration are `EVT-001` onward, allocated by a counter. The
 
 ## Discrete-event engine
 
-Virtual time is a number the engine owns. It is not the operating-system clock. The engine never sleeps. It pops the next `ScheduledEvent` and sets the clock to that event's time, so a 50 ms gap costs one assignment.
+Virtual time is a number the engine owns. It is not the operating-system clock. The engine never sleeps. It looks at the next `ScheduledEvent` and, only after that request is fully recorded, removes it and sets the clock to that event's time. A 50 ms gap costs one assignment.
 
 ```mermaid
 flowchart TB
@@ -172,6 +172,8 @@ For each executed request the history gains two `Event` values, and `event_times
 `std::priority_queue` is a max-heap. The comparator treats a later time, then a larger sequence number, as smaller, so `top()` is the earliest insertion. Scheduling and pop are O(log N). Service lookup is O(1) on average. Processing N queued requests is O(N log N). The sequence counter is `uint64_t`. The scheduler throws `std::overflow_error` before the counter would wrap and scramble equal-time order.
 
 `run_next(max_requests)` executes at most that many queued requests. Zero executes none. A limit larger than the queue executes what is left and returns that count. Time and history stay as they are. `run()` is `run_next` of the current pending count.
+
+One request is committed only after `Service::handle` returns. The commit writes `RequestReceived` and the outcome, the matching timestamps, the execution record, and the success or rejection counter, then advances the clock. The request stays in the queue until that commit finishes. If `handle` throws, the engine changes nothing for that request and the exception propagates. It is not turned into `RequestRejected`. Requests already finished earlier in the same `run_next` stay finished. `Service::handle` must not call back into the same engine. A rejected `ServiceResult` is still the normal path for an unsupported operation or an unknown service.
 
 ## How later stages plug in
 

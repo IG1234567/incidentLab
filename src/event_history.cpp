@@ -8,6 +8,14 @@ namespace incidentlab {
 
 void EventHistory::record(Event event) { events_.push_back(std::move(event)); }
 
+void EventHistory::reserve(std::size_t capacity) { events_.reserve(capacity); }
+
+void EventHistory::drop_last() noexcept {
+    if (!events_.empty()) {
+        events_.pop_back();
+    }
+}
+
 const std::vector<Event>& EventHistory::events() const noexcept { return events_; }
 
 std::size_t EventHistory::size() const noexcept { return events_.size(); }

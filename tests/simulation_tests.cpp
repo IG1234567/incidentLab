@@ -11,6 +11,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -425,6 +426,196 @@ INCIDENTLAB_TEST(stage3_demo_completes_three_services) {
 INCIDENTLAB_TEST(stage3_demo_final_time_is_50) {
     const incidentlab::SimulationReport report = incidentlab::run_stage3_demo();
     EXPECT(report.current_time == 50);
+}
+
+class ThrowingService : public incidentlab::Service {
+public:
+    explicit ThrowingService(std::string name) : name_(std::move(name)) {}
+
+    std::string name() const override { return name_; }
+
+    incidentlab::ServiceResult handle(const incidentlab::Request& request) override {
+        throw std::runtime_error("service failed: " + request.request_id);
+    }
+
+private:
+    std::string name_;
+};
+
+class FailOnceService : public incidentlab::Service {
+public:
+    std::string name() const override { return "FailOnceService"; }
+
+    incidentlab::ServiceResult handle(const incidentlab::Request&) override {
+        ++calls_;
+        if (calls_ == 1) {
+            throw std::runtime_error("first attempt failed");
+        }
+        return incidentlab::ServiceResult{incidentlab::ServiceStatus::Success, "recovered"};
+    }
+
+    int calls() const { return calls_; }
+
+private:
+    int calls_ = 0;
+};
+
+void expect_consistent(const incidentlab::SimulationEngine& engine) {
+    const incidentlab::SimulationReport report = engine.report();
+    EXPECT(report.history.size() == report.event_times.size());
+    EXPECT(report.history.size() == engine.history().size());
+    EXPECT(report.processed_requests == report.executions.size());
+    EXPECT(report.successful_requests + report.rejected_requests == report.processed_requests);
+    EXPECT(report.current_time == engine.clock().now());
+}
+
+INCIDENTLAB_TEST(throwing_service_keeps_the_request_pending) {
+    ThrowingService billing{"BillingService"};
+    incidentlab::SimulationEngine engine;
+    engine.register_service(billing);
+    engine.schedule_request(make_request("REQ-009", "BillingService", "Charge"), 25);
+
+    try {
+        engine.run_next(1);
+        throw incidentlab_test::Failure("expected the service exception");
+    } catch (const std::runtime_error& ex) {
+        EXPECT(std::string(ex.what()) == "service failed: REQ-009");
+    }
+
+    expect_consistent(engine);
+    EXPECT(engine.report().processed_requests == 0);
+    EXPECT(engine.report().pending_requests == 1);
+    EXPECT(engine.report().successful_requests == 0);
+    EXPECT(engine.report().rejected_requests == 0);
+    EXPECT(engine.history().size() == 0);
+    EXPECT(engine.clock().now() == 0);
+
+    try {
+        engine.run();
+        throw incidentlab_test::Failure("expected the service exception again");
+    } catch (const std::runtime_error& ex) {
+        EXPECT(std::string(ex.what()) == "service failed: REQ-009");
+    }
+    EXPECT(engine.report().pending_requests == 1);
+    EXPECT(engine.history().size() == 0);
+}
+
+INCIDENTLAB_TEST(throwing_service_does_not_drop_later_requests) {
+    incidentlab::OrderService orders;
+    ThrowingService billing{"BillingService"};
+    incidentlab::SimulationEngine engine;
+    engine.register_service(orders);
+    engine.register_service(billing);
+    engine.schedule_request(make_request("REQ-001", "OrderService", "CreateOrder"), 10);
+    engine.schedule_request(make_request("REQ-002", "BillingService", "Charge"), 20);
+    engine.schedule_request(make_request("REQ-003", "OrderService", "CreateOrder"), 30);
+
+    try {
+        engine.run_next(3);
+        throw incidentlab_test::Failure("expected the service exception");
+    } catch (const std::runtime_error&) {
+    }
+
+    expect_consistent(engine);
+    const incidentlab::SimulationReport report = engine.report();
+    EXPECT(report.processed_requests == 1);
+    EXPECT(report.pending_requests == 2);
+    EXPECT(report.successful_requests == 1);
+    EXPECT(report.rejected_requests == 0);
+    EXPECT(report.current_time == 10);
+    EXPECT(report.executions.size() == 1);
+    EXPECT(report.executions[0].request_id == "REQ-001");
+    EXPECT(report.history.size() == 2);
+    EXPECT(report.event_times[0] == 10);
+    EXPECT(report.event_times[1] == 10);
+    EXPECT(report.history.events()[0].type == incidentlab::EventType::RequestReceived);
+    EXPECT(report.history.events()[1].type == incidentlab::EventType::RequestCompleted);
+    EXPECT(report.history.by_request_id("REQ-002").empty());
+    EXPECT(report.history.by_request_id("REQ-003").empty());
+}
+
+INCIDENTLAB_TEST(throwing_service_preserves_equal_time_order) {
+    ThrowingService first{"ServiceA"};
+    incidentlab::OrderService orders;
+    incidentlab::SimulationEngine engine;
+    engine.register_service(first);
+    engine.register_service(orders);
+    engine.schedule_request(make_request("REQ-A", "ServiceA", "Charge"), 20);
+    engine.schedule_request(make_request("REQ-B", "OrderService", "CreateOrder"), 20);
+
+    try {
+        engine.run_next(2);
+        throw incidentlab_test::Failure("expected the service exception");
+    } catch (const std::runtime_error& ex) {
+        EXPECT(std::string(ex.what()) == "service failed: REQ-A");
+    }
+
+    try {
+        engine.run_next(1);
+        throw incidentlab_test::Failure("expected the same request to remain first");
+    } catch (const std::runtime_error& ex) {
+        EXPECT(std::string(ex.what()) == "service failed: REQ-A");
+    }
+    EXPECT(engine.report().pending_requests == 2);
+    EXPECT(engine.history().size() == 0);
+    EXPECT(engine.clock().now() == 0);
+}
+
+INCIDENTLAB_TEST(failed_attempt_can_be_executed_later) {
+    FailOnceService flaky;
+    incidentlab::SimulationEngine engine;
+    engine.register_service(flaky);
+    engine.schedule_request(make_request("REQ-004", "FailOnceService", "Charge"), 15);
+
+    try {
+        engine.run_next(1);
+        throw incidentlab_test::Failure("expected the first attempt to throw");
+    } catch (const std::runtime_error&) {
+    }
+    EXPECT(flaky.calls() == 1);
+    EXPECT(engine.history().size() == 0);
+    EXPECT(engine.clock().now() == 0);
+
+    EXPECT(engine.run_next(1) == 1);
+    expect_consistent(engine);
+    const incidentlab::SimulationReport report = engine.report();
+    EXPECT(report.processed_requests == 1);
+    EXPECT(report.pending_requests == 0);
+    EXPECT(report.successful_requests == 1);
+    EXPECT(report.current_time == 15);
+    EXPECT(report.history.size() == 2);
+    EXPECT(report.history.events()[0].event_id == "EVT-001");
+    EXPECT(report.history.events()[1].event_id == "EVT-002");
+    EXPECT(report.history.events()[1].message == "recovered");
+    EXPECT(report.event_times[0] == 15);
+    EXPECT(report.event_times[1] == 15);
+    EXPECT(flaky.calls() == 2);
+}
+
+INCIDENTLAB_TEST(run_next_zero_does_not_call_a_throwing_service) {
+    ThrowingService billing{"BillingService"};
+    incidentlab::SimulationEngine engine;
+    engine.register_service(billing);
+    engine.schedule_request(make_request("REQ-001", "BillingService", "Charge"), 10);
+    EXPECT(engine.run_next(0) == 0);
+    EXPECT(engine.report().pending_requests == 1);
+    EXPECT(engine.history().size() == 0);
+}
+
+INCIDENTLAB_TEST(scheduler_next_does_not_remove_the_event) {
+    incidentlab::EventScheduler scheduler;
+    scheduler.schedule(make_request("REQ-001", "OrderService", "CreateOrder"), 10, 0);
+    EXPECT(scheduler.next().request.request_id == "REQ-001");
+    EXPECT(scheduler.pending_count() == 1);
+    scheduler.discard_next();
+    EXPECT(scheduler.pending_count() == 0);
+    try {
+        scheduler.next();
+        throw incidentlab_test::Failure("expected std::logic_error");
+    } catch (const std::logic_error&) {
+    }
+    scheduler.discard_next();
+    EXPECT(scheduler.pending_count() == 0);
 }
 
 INCIDENTLAB_TEST(stage3_demo_records_six_events) {

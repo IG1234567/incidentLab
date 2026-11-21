@@ -32,6 +32,19 @@ std::optional<ScheduledEvent> EventScheduler::pop_next() {
     return next;
 }
 
+const ScheduledEvent& EventScheduler::next() const {
+    if (queue_.empty()) {
+        throw std::logic_error("EventScheduler::next called on an empty scheduler");
+    }
+    return queue_.top();
+}
+
+void EventScheduler::discard_next() noexcept {
+    if (!queue_.empty()) {
+        queue_.pop();
+    }
+}
+
 bool EventScheduler::has_pending() const noexcept { return !queue_.empty(); }
 
 std::size_t EventScheduler::pending_count() const noexcept { return queue_.size(); }
