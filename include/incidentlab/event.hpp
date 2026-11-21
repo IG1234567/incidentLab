@@ -7,8 +7,10 @@ namespace incidentlab {
 
 enum class EventType { RequestReceived, RequestCompleted, RequestRejected };
 
-/// One recorded fact about a request. Stage 3 will add simulation time.
+/// One recorded fact about a request.
 ///
+/// Virtual time is not stored here. SimulationEngine keeps a timestamp beside each
+/// recorded event so this type stays the same for Stage 2 callers.
 /// Construction rejects an empty event id, request id, trace id, or service name.
 struct Event {
     Event(std::string event_id, std::string request_id, std::string trace_id,

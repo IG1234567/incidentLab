@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 adds the domain model and a fixed demonstration script. The discrete-event engine is still Stage 3.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Failure injection is still Stage 4.
 
 ## What exists now
 
@@ -14,26 +14,26 @@ flowchart LR
 
     subgraph core [incidentlab_core]
         Version["Version"]
-        Demo["Stage 2 demo script"]
+        Engine["SimulationEngine"]
         Domain["Request, Service, Event, EventHistory"]
     end
 
     Tests["incidentlab_tests"]
 
     App -->|"prints"| Version
-    App -->|"prints the report"| Demo
-    Demo --> Domain
+    App -->|"prints the report"| Engine
+    Engine --> Domain
     Tests --> Domain
-    Tests --> Demo
+    Tests --> Engine
 ```
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
-| `incidentlab` | Print the startup banner and the Stage 2 report. | `incidentlab::core` |
-| `incidentlab_core` | Version, domain types, and the fixed demonstration script. | C++ standard library only |
-| `incidentlab_tests` | Assert the domain rules and the demonstration. | `incidentlab::core` |
+| `incidentlab` | Print the startup banner and the Stage 3 report. | `incidentlab::core` |
+| `incidentlab_core` | Version, domain types, the Stage 2 script, and the simulation engine. | C++ standard library only |
+| `incidentlab_tests` | Assert the domain rules and the simulation. | `incidentlab::core` |
 
-The library does not include `iostream` for the banner or the report. `src/main.cpp` formats `DemoReport`. A test calls `run_stage2_demo()` and reads the same struct. Neither path is required for the other.
+The library does not include `iostream`. `src/main.cpp` formats `SimulationReport`. Tests call the engine and `run_stage2_demo()` directly.
 
 The version number is still defined once, in `project(VERSION ...)` inside `CMakeLists.txt`.
 
@@ -132,7 +132,46 @@ Event ids in the demonstration are `EVT-001` onward, allocated by a counter. The
 
 ### What the demonstration is
 
-`run_stage2_demo()` is a fixed script: create the trace, call the three services, store six events. It is not a scheduler. Stage 3 can delete `stage2_demo.hpp` and `stage2_demo.cpp` without changing `Service`, `Request`, or `Event`.
+`run_stage2_demo()` remains a fixed script for the original domain tests. The console now calls `run_stage3_demo()`, which schedules the same three services and lets `SimulationEngine` order them.
+
+## Discrete-event engine
+
+Virtual time is a number the engine owns. It is not the operating-system clock. The engine never sleeps. It pops the next `ScheduledEvent` and sets the clock to that event's time, so a 50 ms gap costs one assignment.
+
+```mermaid
+flowchart TB
+    Demo["run_stage3_demo"] --> Engine["SimulationEngine"]
+    Engine --> Clock["SimulationClock"]
+    Engine --> Scheduler["EventScheduler"]
+    Engine --> History["EventHistory"]
+    Scheduler --> Scheduled["ScheduledEvent"]
+    Scheduled --> Request["Request"]
+    Engine -->|"Service* by name"| Service["Service"]
+    Service --> Order["OrderService"]
+    Service --> Payment["PaymentService"]
+    Service --> Inventory["InventoryService"]
+    Engine --> Report["SimulationReport"]
+    Report --> History
+    Report --> Timed["event_times"]
+```
+
+| Type | Owns | Does not own |
+| --- | --- | --- |
+| `SimulationClock` | The current virtual millisecond. | The scheduler. |
+| `ScheduledEvent` | A time, a sequence number, and a `Request` copy. | A callback. |
+| `EventScheduler` | The pending queue and the next sequence number. | The clock. The engine passes `now`. |
+| `SimulationEngine` | The clock, the scheduler, the history, timestamps, and execution records. | The `Service` objects. It stores `Service*`. |
+| `SimulationReport` | A snapshot copied from the engine at one moment. | A second log that keeps growing. |
+
+`register_service(Service&)` inserts the pointer into `std::unordered_map` under `service.name()`. A second registration of the same name throws `std::invalid_argument`. The pointed-to service must outlive every `run` or `run_next` that might call it. The engine does not delete it.
+
+Routing reads `request.target_service` and finds that map entry. `handle()` is virtual, so `OrderService`, `PaymentService`, and `InventoryService` are selected by the dynamic type. There is no switch on the class. A missing name does not stop the run: the engine records `RequestReceived`, then `RequestRejected` with `Unknown service: <name>`.
+
+For each executed request the history gains two `Event` values, and `event_times` gains the same virtual time twice. `Event` itself has no time field, so Stage 2 code is unchanged. The report copies `history` and `event_times` together. Index `i` in both refers to the same fact.
+
+`std::priority_queue` is a max-heap. The comparator treats a later time, then a larger sequence number, as smaller, so `top()` is the earliest insertion. Scheduling and pop are O(log N). Service lookup is O(1) on average. Processing N queued requests is O(N log N). The sequence counter is `uint64_t`. The scheduler throws `std::overflow_error` before the counter would wrap and scramble equal-time order.
+
+`run_next(max_requests)` executes at most that many queued requests. Zero executes none. A limit larger than the queue executes what is left and returns that count. Time and history stay as they are. `run()` is `run_next` of the current pending count.
 
 ## How later stages plug in
 
@@ -169,7 +208,7 @@ flowchart TB
 | Stage | Where it will land | Role |
 | --- | --- | --- |
 | 2 | `include/incidentlab/`, `src/`, `tests/` | Requests, services, events, history, and the fixed demo. Present now. |
-| 3 | `include/incidentlab/simulation/`, `src/simulation/` | Schedule calls. No drawing. Replaces the fixed script. |
+| 3 | `include/incidentlab/simulation/`, `src/simulation/` | Virtual clock, scheduler, and engine. Present now. |
 | 4 | failure policies the engine consults | Timeouts, crashes, slow calls, dropped messages. |
 | 5 | strategies composed into callers | Retry and circuit breaker. |
 | 6 | metrics the engine records | Counters and health. The UI only reads them. |
@@ -192,4 +231,6 @@ The Stage 2 tests are an executable with assertions, registered with CTest. Goog
 - Three service classes, not one class configured with strings. The accepted operation and the success text already differ, and later stages can change one service without editing the others. The virtual call is the extension point.
 - No gateway, queue, database, retry, circuit breaker, clock, or metric registry in this stage. Those need a scheduler or a failure model that does not exist yet.
 - `Service` is non-copyable. The demo keeps concrete services on the stack and passes `Service&`.
-- Event ids are formatted in the demo, not inside `Event`. `Event` only checks that the id it was given is non-empty.
+- `Service*` values in the engine are non-owning. The caller keeps the service objects alive.
+- `ScheduledEvent` and `Event` stay separate. One is future work. The other is a recorded fact.
+- Virtual time is a parallel vector, not a new field on `Event`, so the Stage 2 event type did not change.

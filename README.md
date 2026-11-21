@@ -4,7 +4,7 @@ IncidentLab is a distributed systems failure simulator for learning how a small 
 
 The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 2 of 10 is implemented.** The program prints the Stage 1 banner, then runs one fixed trace through three services and prints the event history. Failure injection, retries, queues, and the window are not in the build yet.
+**Stage 3 of 10 is implemented.** The program prints the Stage 1 banner, then runs a discrete-event simulation of one trace. Failure injection, retries, queues, and the window are not in the build yet.
 
 ## Implemented features
 
@@ -12,15 +12,16 @@ The whole system runs in one process. Services are models. Nothing is deployed, 
 - Debug and Release configurations, without assuming a particular compiler
 - One version number, owned by the build and reported at startup
 - Domain model: `Request`, `Service`, `OrderService`, `PaymentService`, `InventoryService`, `ServiceResult`, `Event`, `EventHistory`
-- A fixed Stage 2 demonstration: one trace, three requests, six events
-- Automated tests for validation, service behavior, history filters, and the demonstration
+- A fixed Stage 2 script, `run_stage2_demo()`, kept for the original domain tests
+- A discrete-event engine: `SimulationClock`, `EventScheduler`, `SimulationEngine`
+- A Stage 3 console demonstration: three requests at 10 ms, 30 ms, and 50 ms
+- Automated tests for the domain model and the simulation
 
 ## Planned features
 
 These are not in the build yet.
 
 - A simulated API gateway, event queue, and databases
-- A discrete-event simulation clock and scheduler
 - Failure injection
 - Retries, circuit breakers, and a dead-letter queue
 - Health and metrics
@@ -36,7 +37,23 @@ These are not in the build yet.
 | Git | raylib (Stage 7) |
 |  | GitHub Actions (Stage 9) |
 
-The Stage 2 tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window.
+The tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window.
+
+## Discrete-event simulation
+
+A discrete-event simulation does not step through every millisecond. It keeps a list of future requests and jumps the clock to the time of the next one. Nothing waits. `sleep()` is not used, because virtual time and wall-clock time are different things. A request scheduled 50 ms later runs on the next loop iteration.
+
+`SimulationClock` stores that virtual time in milliseconds. It starts at 0. `advance_to` moves it forward. A smaller value throws `std::invalid_argument`.
+
+`EventScheduler` stores requests that have not run yet. `std::priority_queue` returns the earliest time first. When two requests share a time, the one scheduled first runs first. Scheduling and removal are O(log N). Looking up a service by name in `std::unordered_map` is O(1) on average. Running N queued requests is O(N log N).
+
+`SimulationEngine` owns the clock, the scheduler, and one `EventHistory`. `register_service` keeps a non-owning pointer, so the service object must outlive the engine. A request is routed by `target_service`. The call goes through `Service::handle`, so the engine does not switch on the concrete class. An unknown name becomes `ServiceStatus::Rejected` and a `RequestRejected` event. The simulation continues.
+
+`ScheduledEvent` means "run this request later." `Event` means "this already happened." They are different types. Virtual time is stored beside the history, in `SimulationReport::event_times`, at the same index as `history.events()`. The history itself is unchanged from Stage 2.
+
+`run_next(n)` executes at most n queued requests and leaves the rest, the clock, and the history in place. `run_next(0)` does nothing. `run()` finishes whatever is still queued.
+
+The console calls `run_stage3_demo()`. That function schedules Inventory at 50 ms, Order at 10 ms, and Payment at 30 ms, then asks the engine to run. The printed order is 10, then 30, then 50. `run_stage2_demo()` is still in the library for the original tests. The console no longer calls it.
 
 ## Domain model
 
@@ -155,7 +172,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`incidentlab_domain` is one CTest test. It runs every domain case in `tests/domain_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
+`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp` and `tests/simulation_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
 
 ## Run
 
@@ -181,37 +198,36 @@ Version 0.1.0
 
 Status: Application initialized successfully.
 
-========== STAGE 2 DEMO ==========
+========== STAGE 3 SIMULATION ==========
 
-Trace: TRACE-001
+Simulation started.
+Virtual time: 0 ms
 
-[REQ-001] OrderService
+[10 ms] REQ-001 -> OrderService
 Operation: CreateOrder
 Status: SUCCESS
 
-[REQ-002] PaymentService
+[30 ms] REQ-002 -> PaymentService
 Operation: ProcessPayment
 Status: SUCCESS
 
-[REQ-003] InventoryService
+[50 ms] REQ-003 -> InventoryService
 Operation: ReserveInventory
 Status: SUCCESS
 
-========== EVENT HISTORY ==========
+========== SIMULATION REPORT ==========
 
-[EVT-001] REQ-001 RequestReceived
-[EVT-002] REQ-001 RequestCompleted
+Trace: TRACE-001
 
-[EVT-003] REQ-002 RequestReceived
-[EVT-004] REQ-002 RequestCompleted
+Processed Requests: 3
+Successful Requests: 3
+Rejected Requests: 0
+Pending Requests: 0
 
-[EVT-005] REQ-003 RequestReceived
-[EVT-006] REQ-003 RequestCompleted
-
-Total Requests: 3
 Total Events: 6
+Final Virtual Time: 50 ms
 
-Stage 2 demonstration completed successfully.
+Simulation completed successfully.
 ```
 
 The process exits with status 0. If the report cannot be written, it prints an error to standard error and exits with status 1.
@@ -223,12 +239,15 @@ The process exits with status 0. If the report cannot be written, it prints an e
 ├── CMakeLists.txt
 ├── CMakePresets.json
 ├── include/incidentlab/     # public headers of the core library
+│   └── simulation/          # clock, scheduler, engine, report
 ├── src/
 │   ├── main.cpp             # banner and report formatting
+│   ├── simulation/
 │   └── *.cpp                # library implementation
 ├── tests/
 │   ├── test_harness.hpp
-│   └── domain_tests.cpp
+│   ├── domain_tests.cpp
+│   └── simulation_tests.cpp
 ├── docs/architecture.md
 └── README.md
 ```
@@ -241,7 +260,7 @@ The process exits with status 0. If the report cannot be written, it prints an e
 | --- | --- | --- |
 | 1 | Architecture and project setup | Implemented |
 | 2 | Service and event models | Implemented |
-| 3 | Simulation engine | Planned |
+| 3 | Simulation engine | Implemented |
 | 4 | Failure injection | Planned |
 | 5 | Resilience patterns | Planned |
 | 6 | Metrics and observability | Planned |
@@ -250,7 +269,7 @@ The process exits with status 0. If the report cannot be written, it prints an e
 | 9 | Extended testing and CI | Planned |
 | 10 | Documentation and portfolio release | Planned |
 
-Stage 3, when approved, adds a discrete-event scheduler. The Stage 2 script can be removed without changing the service contract.
+Stage 4, when approved, adds failure injection. The engine can record a rejected result without a change to `Service::handle`.
 
 ## License
 
