@@ -1,4 +1,5 @@
 #include "dashboard_renderer.hpp"
+#include "ui_font.hpp"
 
 #include "incidentlab/visualization/simulation_controller.hpp"
 
@@ -10,7 +11,7 @@
 #include <cstdio>
 
 int main() {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI);
     InitWindow(1440, 900, "INCIDENTLAB");
     if (!IsWindowReady()) {
         std::fprintf(stderr, "INCIDENTLAB: the window could not be created.\n");
@@ -18,6 +19,7 @@ int main() {
     }
     SetWindowMinSize(1024, 700);
     SetTargetFPS(60);
+    incidentlab::load_ui_fonts();
 
     incidentlab::SimulationController controller;
     while (!WindowShouldClose()) {
@@ -27,6 +29,7 @@ int main() {
         incidentlab::draw_dashboard(controller.snapshot());
         EndDrawing();
     }
+    incidentlab::unload_ui_fonts();
     CloseWindow();
     return 0;
 }

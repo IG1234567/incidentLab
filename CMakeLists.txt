@@ -117,6 +117,7 @@ if(INCIDENTLAB_BUILD_GUI)
 
     add_executable(incidentlab_gui
         src/gui/gui_main.cpp
+        src/gui/ui_font.cpp
         src/gui/dashboard_renderer.cpp
     )
     target_include_directories(incidentlab_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/gui)

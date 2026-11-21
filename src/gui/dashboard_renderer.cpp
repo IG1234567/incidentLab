@@ -1,4 +1,5 @@
 #include "dashboard_renderer.hpp"
+#include "ui_font.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -59,6 +60,24 @@ int& timeline_scroll() {
 
 bool hit(Rectangle bounds, Vector2 point) { return CheckCollisionPointRec(point, bounds); }
 
+bool roomy_layout() { return GetScreenHeight() >= 820; }
+
+int timeline_row_height() { return ui_text_size(UiRole::Timeline) + 10; }
+
+Rectangle timeline_view(const Layout& layout) {
+    const float top = 12.0F + static_cast<float>(ui_text_size(UiRole::Heading)) + 8.0F;
+    Rectangle view{layout.timeline.x + 12.0F, layout.timeline.y + top,
+                   layout.timeline.width - 24.0F, layout.timeline.height - top - 10.0F};
+    const int row = std::max(1, timeline_row_height());
+    const int rows = std::max(1, static_cast<int>(view.height) / row);
+    view.height = static_cast<float>(rows * row);
+    return view;
+}
+
+int metric_row_height() {
+    return std::max(ui_text_size(UiRole::Label), ui_text_size(UiRole::Value)) + 8;
+}
+
 Rectangle button_row(Rectangle bar, int index, int count) {
     const float gap = 8.0F;
     const float width = (bar.width - 24.0F - gap * static_cast<float>(count - 1)) /
@@ -84,12 +103,13 @@ Layout make_layout(const VisualizationSnapshot& snapshot) {
     const float width = static_cast<float>(std::max(GetScreenWidth(), 1));
     const float height = static_cast<float>(std::max(GetScreenHeight(), 1));
     const float margin = 12.0F;
+    const bool roomy = roomy_layout();
     Layout layout;
-    layout.header = Rectangle{margin, margin, width - 2.0F * margin, 58.0F};
+    layout.header = Rectangle{margin, margin, width - 2.0F * margin, roomy ? 76.0F : 66.0F};
     layout.controls =
         Rectangle{margin, layout.header.y + layout.header.height + 8.0F, width - 2.0F * margin,
-                  46.0F};
-    const float footer_h = 80.0F;
+                  roomy ? 54.0F : 48.0F};
+    const float footer_h = roomy ? 96.0F : 84.0F;
     layout.footer = Rectangle{margin, height - margin - footer_h, width - 2.0F * margin, footer_h};
     const float middle_top = layout.controls.y + layout.controls.height + 8.0F;
     const float middle_bottom = layout.footer.y - 8.0F;
@@ -131,16 +151,16 @@ Layout make_layout(const VisualizationSnapshot& snapshot) {
         }
     }
     placed.insert(placed.end(), extra.begin(), extra.end());
-    const float node_w = 210.0F;
-    const float node_h = 66.0F;
+    const float node_w = 220.0F;
+    const float node_h = roomy ? 78.0F : 70.0F;
     const float node_x = layout.topology.x + layout.topology.width - node_w - 28.0F;
-    const float usable = std::max(node_h, layout.topology.height - 48.0F);
+    const float usable = std::max(node_h, layout.topology.height - 64.0F);
     const float stack = node_h * static_cast<float>(placed.size());
     const float gap = placed.size() <= 1
                           ? 0.0F
                           : std::max(0.0F, std::min(22.0F, (usable - stack) /
                                                                static_cast<float>(placed.size() - 1)));
-    float y = layout.topology.y + 40.0F;
+    float y = layout.topology.y + (roomy ? 62.0F : 56.0F);
     for (const ServiceNodeView* node : placed) {
         layout.nodes.push_back(NodeBox{node->name, Rectangle{node_x, y, node_w, node_h}});
         y += node_h + gap;
@@ -154,18 +174,16 @@ void panel(Rectangle bounds, const char* title) {
                          0.08F, 8, kBorder);
     DrawRectangleRounded(bounds, 0.08F, 8, kPanel);
     if (title != nullptr) {
-        DrawText(title, static_cast<int>(bounds.x + 14.0F), static_cast<int>(bounds.y + 10.0F), 16,
-                 kMuted);
+        ui_draw(UiRole::Heading, bounds.x + 14.0F, bounds.y + 10.0F, title, kMuted);
     }
 }
 
 void draw_button(Rectangle bounds, const char* label, bool active) {
     DrawRectangleRounded(bounds, 0.25F, 6, active ? kAccent : kButton);
-    const int size = 16;
-    const int text_w = MeasureText(label, size);
-    DrawText(label, static_cast<int>(bounds.x + (bounds.width - static_cast<float>(text_w)) * 0.5F),
-             static_cast<int>(bounds.y + (bounds.height - 16.0F) * 0.5F), size,
-             active ? kBackground : kText);
+    const float text_w = ui_measure(UiRole::Button, label);
+    const float text_h = static_cast<float>(ui_text_size(UiRole::Button));
+    ui_draw(UiRole::Button, bounds.x + (bounds.width - text_w) * 0.5F,
+            bounds.y + (bounds.height - text_h) * 0.5F, label, active ? kBackground : kText);
 }
 
 Color status_color(VisualServiceStatus status) {
@@ -210,9 +228,9 @@ void format_ms(char* buffer, std::size_t size, double value) {
     std::snprintf(buffer, size, "%.2f ms", value);
 }
 
-void draw_line_value(int x, int y, int value_x, const char* label, const char* value) {
-    DrawText(label, x, y, 16, kMuted);
-    DrawText(value, value_x, y, 16, kText);
+void draw_line_value(float x, float y, float value_x, const char* label, const char* value) {
+    ui_draw(UiRole::Label, x, y, label, kMuted);
+    ui_draw(UiRole::Value, value_x, y, value, kText);
 }
 
 const ServiceNodeView* find_node(const VisualizationSnapshot& snapshot, const std::string& name) {
@@ -261,11 +279,14 @@ void draw_dashed(Vector2 from, Vector2 to, Color color) {
 
 void draw_topology(const Layout& layout, const VisualizationSnapshot& snapshot) {
     panel(layout.topology, "SERVICE TOPOLOGY");
-    DrawText("Observed calls, not dependencies", static_cast<int>(layout.topology.x + 14.0F),
-             static_cast<int>(layout.topology.y + 30.0F), 14, kMuted);
+    ui_draw(UiRole::Detail, layout.topology.x + 14.0F,
+            layout.topology.y + 12.0F + static_cast<float>(ui_text_size(UiRole::Heading)),
+            "Observed calls, not dependencies", kMuted);
     DrawRectangleRounded(layout.client, 0.3F, 6, kButton);
-    DrawText("client", static_cast<int>(layout.client.x + 18.0F),
-             static_cast<int>(layout.client.y + 10.0F), 16, kText);
+    const float client_text_w = ui_measure(UiRole::Label, "client");
+    ui_draw(UiRole::Label, layout.client.x + (layout.client.width - client_text_w) * 0.5F,
+            layout.client.y + (layout.client.height - static_cast<float>(ui_text_size(UiRole::Label))) * 0.5F,
+            "client", kText);
 
     for (const FlowEdge& edge : snapshot.flows) {
         const NodeBox* target = nullptr;
@@ -303,15 +324,16 @@ void draw_topology(const Layout& layout, const VisualizationSnapshot& snapshot) 
         DrawRectangleRounded(box.bounds, 0.12F, 6, kBackground);
         DrawRectangle(static_cast<int>(box.bounds.x), static_cast<int>(box.bounds.y + 8.0F), 6,
                       static_cast<int>(box.bounds.height - 16.0F), mark);
-        DrawText(node->name.c_str(), static_cast<int>(box.bounds.x + 16.0F),
-                 static_cast<int>(box.bounds.y + 6.0F), 16, kText);
-        DrawText(to_string(node->status), static_cast<int>(box.bounds.x + 16.0F),
-                 static_cast<int>(box.bounds.y + 24.0F), 14, mark);
+        const float name_size = static_cast<float>(ui_text_size(UiRole::Label));
+        const float detail_size = static_cast<float>(ui_text_size(UiRole::Detail));
+        ui_draw(UiRole::Label, box.bounds.x + 16.0F, box.bounds.y + 8.0F, node->name.c_str(), kText);
+        ui_draw(UiRole::Detail, box.bounds.x + 16.0F, box.bounds.y + 10.0F + name_size,
+                to_string(node->status), mark);
         char detail[96];
-        std::snprintf(detail, sizeof(detail), "%zu done  %.0f%% ok", node->completed_requests,
+        std::snprintf(detail, sizeof(detail), "%zu done   %.0f%% ok", node->completed_requests,
                       node->success_rate_percent);
-        DrawText(detail, static_cast<int>(box.bounds.x + 16.0F),
-                 static_cast<int>(box.bounds.y + 44.0F), 14, kMuted);
+        ui_draw(UiRole::Detail, box.bounds.x + 16.0F,
+                box.bounds.y + 14.0F + name_size + detail_size, detail, kMuted);
     }
 }
 
@@ -321,55 +343,56 @@ void draw_metrics(const Layout& layout, const VisualizationSnapshot& snapshot) {
                      static_cast<int>(layout.metrics.width),
                      static_cast<int>(layout.metrics.height));
     const GlobalMetrics& global = snapshot.metrics.global;
-    const int left = static_cast<int>(layout.metrics.x + 16.0F);
-    const int right = static_cast<int>(layout.metrics.x + layout.metrics.width * 0.52F);
-    const int left_value = left + 148;
-    const int right_value = right + 148;
-    int y = static_cast<int>(layout.metrics.y + 36.0F);
+    const float left = layout.metrics.x + 16.0F;
+    const float right = layout.metrics.x + layout.metrics.width * 0.52F;
+    const float left_value = left + 156.0F;
+    const float right_value = right + 156.0F;
+    float y = layout.metrics.y + 14.0F + static_cast<float>(ui_text_size(UiRole::Heading));
+    const float step = static_cast<float>(metric_row_height());
     char value[64];
     std::snprintf(value, sizeof(value), "%zu", global.outcomes.completed);
     draw_line_value(left, y, left_value, "Completed", value);
     std::snprintf(value, sizeof(value), "%zu", global.retries.total_attempts);
     draw_line_value(right, y, right_value, "Attempts", value);
-    y += 22;
+    y += step;
     std::snprintf(value, sizeof(value), "%zu", global.outcomes.successful);
     draw_line_value(left, y, left_value, "Successful", value);
     std::snprintf(value, sizeof(value), "%zu", global.retries.retry_attempts);
     draw_line_value(right, y, right_value, "Retries", value);
-    y += 22;
+    y += step;
     std::snprintf(value, sizeof(value), "%zu", global.outcomes.failed);
     draw_line_value(left, y, left_value, "Failed", value);
     std::snprintf(value, sizeof(value), "%zu", global.retries.recovered_after_retry);
     draw_line_value(right, y, right_value, "Recovered", value);
-    y += 22;
+    y += step;
     format_percent(value, sizeof(value), global.success_rate_percent);
     draw_line_value(left, y, left_value, "Success rate", value);
     std::snprintf(value, sizeof(value), "%zu", global.retries.exhausted_retries);
     draw_line_value(right, y, right_value, "Exhausted", value);
-    y += 22;
+    y += step;
     format_percent(value, sizeof(value), global.failure_rate_percent);
     draw_line_value(left, y, left_value, "Failure rate", value);
     std::snprintf(value, sizeof(value), "%zu", global.circuit_openings);
     draw_line_value(right, y, right_value, "Openings", value);
-    y += 22;
+    y += step;
     format_ms(value, sizeof(value), global.latency.average_ms);
     draw_line_value(left, y, left_value, "Average", value);
     std::snprintf(value, sizeof(value), "%zu", global.circuit_half_openings);
     draw_line_value(right, y, right_value, "Half-open", value);
-    y += 22;
+    y += step;
     format_ms(value, sizeof(value), global.latency.p50_ms);
     draw_line_value(left, y, left_value, "P50", value);
     std::snprintf(value, sizeof(value), "%zu", global.outcomes.circuit_rejected);
     draw_line_value(right, y, right_value, "Rejected", value);
-    y += 22;
+    y += step;
     format_ms(value, sizeof(value), global.latency.p95_ms);
     draw_line_value(left, y, left_value, "P95", value);
     std::snprintf(value, sizeof(value), "%zu", global.dead_lettered_requests);
     draw_line_value(right, y, right_value, "DLQ entries", value);
-    y += 22;
+    y += step;
     format_ms(value, sizeof(value), global.latency.p99_ms);
     draw_line_value(left, y, left_value, "P99", value);
-    y += 22;
+    y += step;
     const std::string throughput = format_optional_metric(global.throughput_requests_per_second);
     char throughput_text[64];
     if (throughput == "N/A") {
@@ -384,24 +407,23 @@ void draw_metrics(const Layout& layout, const VisualizationSnapshot& snapshot) {
 void draw_timeline(const Layout& layout, const VisualizationSnapshot& snapshot) {
     panel(layout.timeline, "INCIDENT TIMELINE");
     const char* hint = "Space pause/resume    N step    R reset    Esc close";
-    const int hint_w = MeasureText(hint, 14);
-    if (hint_w + 180 < static_cast<int>(layout.timeline.width)) {
-        DrawText(hint, static_cast<int>(layout.timeline.x + layout.timeline.width) - hint_w - 14,
-                 static_cast<int>(layout.timeline.y + 12.0F), 14, kMuted);
+    const float hint_w = ui_measure(UiRole::Detail, hint);
+    if (hint_w + 220.0F < layout.timeline.width) {
+        ui_draw(UiRole::Detail, layout.timeline.x + layout.timeline.width - hint_w - 14.0F,
+                layout.timeline.y + 12.0F, hint, kMuted);
     }
     const std::vector<TimelineEntry> entries = timeline_for_selected_service(snapshot);
-    const Rectangle view{layout.timeline.x + 12.0F, layout.timeline.y + 36.0F,
-                         layout.timeline.width - 24.0F, layout.timeline.height - 48.0F};
+    const Rectangle view = timeline_view(layout);
     BeginScissorMode(static_cast<int>(view.x), static_cast<int>(view.y),
                      static_cast<int>(view.width), static_cast<int>(view.height));
     if (entries.empty()) {
         const char* message = snapshot.selected_service.has_value()
                                   ? "No events for the selected service."
                                   : "No events yet. Press Start or Step.";
-        DrawText(message, static_cast<int>(view.x + 4.0F), static_cast<int>(view.y + 8.0F), 16,
-                 kMuted);
+        ui_draw(UiRole::Timeline, view.x + 4.0F, view.y + 6.0F, message, kMuted);
     }
-    const int row_h = 22;
+    const int row_h = timeline_row_height();
+    const int text_pad = std::max(0, (row_h - ui_text_size(UiRole::Timeline)) / 2);
     const int max_scroll = std::max(0, static_cast<int>(entries.size()) - 1);
     int& scroll = timeline_scroll();
     if (scroll > max_scroll) {
@@ -410,7 +432,7 @@ void draw_timeline(const Layout& layout, const VisualizationSnapshot& snapshot) 
     if (scroll < 0) {
         scroll = 0;
     }
-    int y = static_cast<int>(view.y) - scroll * row_h;
+    int y = static_cast<int>(std::round(view.y)) - scroll * row_h;
     for (const TimelineEntry& entry : entries) {
         if (y + row_h >= static_cast<int>(view.y) && y <= static_cast<int>(view.y + view.height)) {
             const bool selected =
@@ -420,10 +442,10 @@ void draw_timeline(const Layout& layout, const VisualizationSnapshot& snapshot) 
                               kButton);
             }
             char line[160];
-            std::snprintf(line, sizeof(line), "%5llu ms   %-16s  %-8s  %s",
+            std::snprintf(line, sizeof(line), "%5llu ms    %-16s   %-8s   %s",
                           static_cast<unsigned long long>(entry.time_ms), entry.service_name.c_str(),
                           entry.request_id.c_str(), to_string(entry.type));
-            DrawText(line, static_cast<int>(view.x + 4.0F), y + 3, 15, kText);
+            ui_draw(UiRole::Timeline, view.x + 4.0F, static_cast<float>(y + text_pad), line, kText);
         }
         y += row_h;
     }
@@ -432,23 +454,25 @@ void draw_timeline(const Layout& layout, const VisualizationSnapshot& snapshot) 
 
 void draw_footer(const Layout& layout, const VisualizationSnapshot& snapshot) {
     panel(layout.footer, nullptr);
-    const int x = static_cast<int>(layout.footer.x + 16.0F);
-    int y = static_cast<int>(layout.footer.y + 8.0F);
-    const int event_x = static_cast<int>(layout.footer.x + layout.footer.width * 0.62F);
+    const float x = layout.footer.x + 16.0F;
+    float y = layout.footer.y + 10.0F;
+    const float event_x = layout.footer.x + layout.footer.width * 0.60F;
+    const float gap = static_cast<float>(ui_text_size(UiRole::Detail) + 4);
     BeginScissorMode(static_cast<int>(layout.footer.x), static_cast<int>(layout.footer.y),
-                     event_x - static_cast<int>(layout.footer.x) - 8, static_cast<int>(layout.footer.height));
+                     static_cast<int>(event_x - layout.footer.x) - 8,
+                     static_cast<int>(layout.footer.height));
     if (!snapshot.selected_service.has_value()) {
-        DrawText("Selected service: none. Click a service node.", x, y, 16, kMuted);
+        ui_draw(UiRole::Label, x, y, "Selected service: none. Click a service node.", kMuted);
     } else {
         const std::string& name = *snapshot.selected_service;
         const ServiceNodeView* node = find_node(snapshot, name);
         const ServiceMetrics* metrics = find_metrics(snapshot, name);
         char line[192];
         std::snprintf(line, sizeof(line), "Selected service: %s", name.c_str());
-        DrawText(line, x, y, 16, kText);
-        y += 22;
+        ui_draw(UiRole::Label, x, y, line, kText);
+        y += gap;
         if (node == nullptr || metrics == nullptr) {
-            DrawText("No completed activity for this service.", x, y, 15, kMuted);
+            ui_draw(UiRole::Detail, x, y, "No completed activity for this service.", kMuted);
         } else {
             char rate[32];
             char failure[32];
@@ -458,40 +482,40 @@ void draw_footer(const Layout& layout, const VisualizationSnapshot& snapshot) {
             format_percent(failure, sizeof(failure), metrics->failure_rate_percent);
             format_ms(average, sizeof(average), metrics->latency.average_ms);
             format_ms(p95, sizeof(p95), metrics->latency.p95_ms);
-            std::snprintf(line, sizeof(line),
-                          "Done %zu | Success %s | Failure %s | Avg %s | P95 %s | Retries %zu",
-                          metrics->outcomes.completed, rate, failure, average, p95,
+            std::snprintf(line, sizeof(line), "Done %zu   Success %s   Failure %s",
+                          metrics->outcomes.completed, rate, failure);
+            ui_draw(UiRole::Detail, x, y, line, kMuted);
+            y += gap;
+            std::snprintf(line, sizeof(line), "Avg %s   P95 %s   Retries %zu", average, p95,
                           metrics->retries.retry_attempts);
-            DrawText(line, x, y, 15, kMuted);
+            ui_draw(UiRole::Detail, x, y, line, kMuted);
         }
-        y += 22;
+        y += gap;
         const CircuitMetrics* circuit = find_circuit(snapshot, name);
         const std::string label = circuit_label(node == nullptr ? std::nullopt : node->circuit);
         if (circuit == nullptr) {
             std::snprintf(line, sizeof(line), "Circuit Breaker: %s", label.c_str());
         } else {
             std::snprintf(line, sizeof(line),
-                          "Circuit Breaker: %s | Openings %zu | Half-open %zu | Rejected %zu | DLQ %zu",
-                          label.c_str(), circuit->opened, circuit->half_opened,
-                          circuit->blocked_requests,
+                          "Circuit Breaker: %s    Openings %zu    Half-open %zu    Rejected %zu    DLQ %zu",
+                          label.c_str(), circuit->opened, circuit->half_opened, circuit->blocked_requests,
                           metrics == nullptr ? 0 : metrics->dead_lettered_requests);
         }
-        DrawText(line, x, y, 15, circuit_color(node == nullptr ? std::nullopt : node->circuit));
+        ui_draw(UiRole::Detail, x, y, line, circuit_color(node == nullptr ? std::nullopt : node->circuit));
     }
     EndScissorMode();
 
     const std::optional<TimelineEntry> selected = selected_timeline_entry(snapshot);
     if (!selected.has_value()) {
-        DrawText("Selected event: none", event_x, static_cast<int>(layout.footer.y + 10.0F), 16,
-                 kMuted);
+        ui_draw(UiRole::Label, event_x, layout.footer.y + 10.0F, "Selected event: none", kMuted);
     } else {
         char line[160];
-        std::snprintf(line, sizeof(line), "%s  %llu ms", to_string(selected->type),
+        std::snprintf(line, sizeof(line), "%s    %llu ms", to_string(selected->type),
                       static_cast<unsigned long long>(selected->time_ms));
-        DrawText(line, event_x, static_cast<int>(layout.footer.y + 10.0F), 16, kText);
-        std::snprintf(line, sizeof(line), "%s  %s  %s", selected->service_name.c_str(),
+        ui_draw(UiRole::Label, event_x, layout.footer.y + 10.0F, line, kText);
+        std::snprintf(line, sizeof(line), "%s    %s    %s", selected->service_name.c_str(),
                       selected->request_id.c_str(), selected->trace_id.c_str());
-        DrawText(line, event_x, static_cast<int>(layout.footer.y + 32.0F), 15, kMuted);
+        ui_draw(UiRole::Detail, event_x, layout.footer.y + 10.0F + gap, line, kMuted);
     }
 }
 
@@ -510,13 +534,12 @@ PlaybackSpeed next_speed(PlaybackSpeed speed) {
 }
 
 int timeline_row_at(const Layout& layout, Vector2 mouse, std::size_t count) {
-    const Rectangle view{layout.timeline.x + 12.0F, layout.timeline.y + 36.0F,
-                         layout.timeline.width - 24.0F, layout.timeline.height - 48.0F};
+    const Rectangle view = timeline_view(layout);
     if (!hit(view, mouse) || count == 0) {
         return -1;
     }
     const int local = static_cast<int>(mouse.y - view.y);
-    const int index = timeline_scroll() + local / 22;
+    const int index = timeline_scroll() + local / timeline_row_height();
     if (index < 0 || static_cast<std::size_t>(index) >= count) {
         return -1;
     }
@@ -562,8 +585,7 @@ void update_dashboard(SimulationController& controller) {
         }
     }
 
-    const Rectangle view{layout.timeline.x + 12.0F, layout.timeline.y + 36.0F,
-                         layout.timeline.width - 24.0F, layout.timeline.height - 48.0F};
+    const Rectangle view = timeline_view(layout);
     const float wheel = GetMouseWheelMove();
     if (hit(view, mouse) && wheel != 0.0F) {
         timeline_scroll() -= static_cast<int>(wheel * 3.0F);
@@ -597,18 +619,19 @@ void draw_dashboard(const VisualizationSnapshot& snapshot) {
     const Layout layout = make_layout(snapshot);
     ClearBackground(kBackground);
     panel(layout.header, nullptr);
-    DrawText("INCIDENTLAB", static_cast<int>(layout.header.x + 16.0F),
-             static_cast<int>(layout.header.y + 12.0F), 24, kText);
-    DrawText("Distributed Systems Failure Simulator", static_cast<int>(layout.header.x + 16.0F),
-             static_cast<int>(layout.header.y + 40.0F), 16, kMuted);
+    ui_draw(UiRole::Title, layout.header.x + 16.0F, layout.header.y + 12.0F, "INCIDENTLAB", kText);
+    ui_draw(UiRole::Detail, layout.header.x + 16.0F,
+            layout.header.y + 16.0F + static_cast<float>(ui_text_size(UiRole::Title)),
+            "Distributed Systems Failure Simulator", kMuted);
     char clock_line[96];
-    std::snprintf(clock_line, sizeof(clock_line), "%s    %llu ms    %s",
-                  to_string(snapshot.playback),
+    std::snprintf(clock_line, sizeof(clock_line), "%s    %llu ms    %s", to_string(snapshot.playback),
                   static_cast<unsigned long long>(snapshot.simulation_time_ms),
                   to_string(snapshot.speed));
-    const int clock_w = MeasureText(clock_line, 18);
-    DrawText(clock_line, static_cast<int>(layout.header.x + layout.header.width) - clock_w - 16,
-             static_cast<int>(layout.header.y + 24.0F), 18, kAccent);
+    const float clock_w = ui_measure(UiRole::Value, clock_line);
+    const float clock_y =
+        layout.header.y + (layout.header.height - static_cast<float>(ui_text_size(UiRole::Value))) * 0.5F;
+    ui_draw(UiRole::Value, layout.header.x + layout.header.width - clock_w - 16.0F, clock_y,
+            clock_line, kAccent);
 
     panel(layout.controls, nullptr);
     const PlaybackState state = snapshot.playback;
