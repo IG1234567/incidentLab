@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Failure injection is still Stage 4.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Retries are still Stage 5.
 
 ## What exists now
 
@@ -171,9 +171,36 @@ For each executed request the history gains two `Event` values, and `event_times
 
 `std::priority_queue` is a max-heap. The comparator treats a later time, then a larger sequence number, as smaller, so `top()` is the earliest insertion. Scheduling and pop are O(log N). Service lookup is O(1) on average. Processing N queued requests is O(N log N). The sequence counter is `uint64_t`. The scheduler throws `std::overflow_error` before the counter would wrap and scramble equal-time order.
 
-`run_next(max_requests)` executes at most that many queued requests. Zero executes none. A limit larger than the queue executes what is left and returns that count. Time and history stay as they are. `run()` is `run_next` of the current pending count.
+`run_next(max_requests)` finishes at most that many requests. A start whose outcome is recorded later does not count as finished. Zero executes none. `run()` drains every start and finish action. Time and history stay as they are between calls.
 
-One request is committed only after `Service::handle` returns. The commit writes `RequestReceived` and the outcome, the matching timestamps, the execution record, and the success or rejection counter, then advances the clock. The request stays in the queue until that commit finishes. If `handle` throws, the engine changes nothing for that request and the exception propagates. It is not turned into `RequestRejected`. Requests already finished earlier in the same `run_next` stay finished. `Service::handle` must not call back into the same engine. A rejected `ServiceResult` is still the normal path for an unsupported operation or an unknown service.
+A zero-delay outcome is recorded before the engine reads the next queued action, so Stage 3 order is unchanged. A later outcome is a `Finish` action on the same queue. If `handle` throws, the start stays queued, nothing new is recorded, and the exception propagates. A finish does not call `handle`. If committing it throws, the partial record is rolled back and the finish stays queued.
+
+## Failure injection
+
+Failures are simulated. No packet is sent, no server is contacted, and a virtual delay does not call `sleep`. Retries and circuit breakers are Stage 5. They are not in this build.
+
+```mermaid
+flowchart TB
+    Engine["SimulationEngine"] --> Config["Failure configuration<br/>per service name"]
+    Config --> Decision["Failure decision<br/>every Nth request"]
+    Decision --> Queue["EventScheduler<br/>Start and Finish"]
+    Queue --> History["EventHistory"]
+    History --> Report["SimulationReport"]
+```
+
+| Type | What happens | handle() |
+| --- | --- | --- |
+| None | The service runs and the outcome is recorded at the start time. | Called |
+| ServiceFailure | The service is reached, then the request fails. | Not called |
+| SlowResponse | The service runs at the start time. Success is recorded at start + delay. | Called |
+| Timeout | The deadline is start + timeout. The processing delay is not waited out. | Not called |
+| DroppedRequest | The request never arrives. One `RequestDropped` event is recorded at the start time. | Not called |
+
+`configure_failure` stores the policy on the engine and resets that service's counter. `FailureType::None` removes it. The counter increments when the start is committed, in execution order, including unsupported operations. A drop does not call `handle`, but it still uses its turn so every Nth drop stays aligned. Requests that are not the Nth run normally.
+
+`scheduled_time` is when the start runs. `completion_time` is the start plus the delay, or plus the timeout threshold. The clock advances to the action being committed and never moves backward. At one timestamp, the smaller sequence number runs first. A finish is numbered when the start is committed, so an action already queued at that time runs before it.
+
+`pending_requests` are starts that have not run. `in_progress_requests` have started and are waiting for a finish. `processed_requests` counts only terminal outcomes: successful + rejected + failed + timed out + dropped. An in-progress request is none of those.
 
 ## How later stages plug in
 
@@ -211,7 +238,7 @@ flowchart TB
 | --- | --- | --- |
 | 2 | `include/incidentlab/`, `src/`, `tests/` | Requests, services, events, history, and the fixed demo. Present now. |
 | 3 | `include/incidentlab/simulation/`, `src/simulation/` | Virtual clock, scheduler, and engine. Present now. |
-| 4 | failure policies the engine consults | Timeouts, crashes, slow calls, dropped messages. |
+| 4 | `FailureConfig` inside `SimulationEngine` | Deterministic failure injection. Present now. |
 | 5 | strategies composed into callers | Retry and circuit breaker. |
 | 6 | metrics the engine records | Counters and health. The UI only reads them. |
 | 7 | a separate `incidentlab_viz` target | raylib. It links `incidentlab::core` and contains no simulation rules. |

@@ -10,7 +10,10 @@
 
 namespace incidentlab {
 
-/// One request the engine has already executed, in execution order.
+/// One request the engine has finished, in the order the terminal outcomes were recorded.
+///
+/// simulation_time is the virtual time of that outcome. start_time is when the request began.
+/// They are equal when the outcome is recorded at the start.
 struct ExecutionRecord {
     SimulationClock::Time simulation_time = 0;
     std::string request_id;
@@ -18,6 +21,7 @@ struct ExecutionRecord {
     std::string service_name;
     std::string operation;
     ServiceResult result;
+    SimulationClock::Time start_time = 0;
 };
 
 /// A consistent snapshot of one engine.
@@ -28,8 +32,12 @@ struct SimulationReport {
     SimulationClock::Time current_time = 0;
     std::size_t processed_requests = 0;
     std::size_t pending_requests = 0;
+    std::size_t in_progress_requests = 0;
     std::size_t successful_requests = 0;
     std::size_t rejected_requests = 0;
+    std::size_t failed_requests = 0;
+    std::size_t timed_out_requests = 0;
+    std::size_t dropped_requests = 0;
     EventHistory history;
     std::vector<SimulationClock::Time> event_times;
     std::vector<ExecutionRecord> executions;

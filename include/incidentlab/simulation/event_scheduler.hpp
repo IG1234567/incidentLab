@@ -17,7 +17,8 @@ namespace incidentlab {
 /// O(log N). N is the number of pending requests.
 class EventScheduler {
 public:
-    void schedule(Request request, SimulationClock::Time scheduled_time, SimulationClock::Time now);
+    void schedule(Request request, SimulationClock::Time scheduled_time, SimulationClock::Time now,
+                  ScheduledAction action = ScheduledAction::Start);
 
     /// The earliest pending request, or nullopt when nothing is waiting.
     std::optional<ScheduledEvent> pop_next();

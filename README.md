@@ -4,7 +4,7 @@ IncidentLab is a distributed systems failure simulator for learning how a small 
 
 The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 3 of 10 is implemented.** The program prints the Stage 1 banner, then runs a discrete-event simulation of one trace. Failure injection, retries, queues, and the window are not in the build yet.
+**Stage 4 of 10 is implemented.** The program prints the Stage 1 banner, then runs a deterministic failure-injection scenario. Retries, circuit breakers, and the window are not in the build yet.
 
 ## Implemented features
 
@@ -14,15 +14,16 @@ The whole system runs in one process. Services are models. Nothing is deployed, 
 - Domain model: `Request`, `Service`, `OrderService`, `PaymentService`, `InventoryService`, `ServiceResult`, `Event`, `EventHistory`
 - A fixed Stage 2 script, `run_stage2_demo()`, kept for the original domain tests
 - A discrete-event engine: `SimulationClock`, `EventScheduler`, `SimulationEngine`
-- A Stage 3 console demonstration: three requests at 10 ms, 30 ms, and 50 ms
-- Automated tests for the domain model and the simulation
+- A Stage 3 demonstration, `run_stage3_demo()`, kept for the original simulation tests
+- Deterministic failure injection: service failure, slow response, timeout, and dropped request
+- A Stage 4 console demonstration: Inventory finishes while Payment is still heading for a timeout
+- Automated tests for the domain model, the simulation, and failure injection
 
 ## Planned features
 
 These are not in the build yet.
 
 - A simulated API gateway, event queue, and databases
-- Failure injection
 - Retries, circuit breakers, and a dead-letter queue
 - Health and metrics
 - Side-by-side comparison of resilience strategies
@@ -51,9 +52,13 @@ A discrete-event simulation does not step through every millisecond. It keeps a 
 
 `ScheduledEvent` means "run this request later." `Event` means "this already happened." They are different types. Virtual time is stored beside the history, in `SimulationReport::event_times`, at the same index as `history.events()`. The history itself is unchanged from Stage 2.
 
-`run_next(n)` executes at most n queued requests and leaves the rest, the clock, and the history in place. `run_next(0)` does nothing. `run()` finishes whatever is still queued. If a service throws, that request stays queued, nothing is recorded for it, and the exception is not swallowed. A normal rejected result is still `RequestRejected`.
+`run_next(n)` finishes at most n requests. `run_next(0)` does nothing. `run()` drains every queued start and finish. If a service throws, that start stays queued, nothing new is recorded for it, and the exception is not swallowed. A simulated failure is a normal outcome. It does not throw.
 
-The console calls `run_stage3_demo()`. That function schedules Inventory at 50 ms, Order at 10 ms, and Payment at 30 ms, then asks the engine to run. The printed order is 10, then 30, then 50. `run_stage2_demo()` is still in the library for the original tests. The console no longer calls it.
+With no failure configuration, a request is received and completed at its scheduled time. A slow response, a delayed failure, or a timeout leaves a finish action on the same queue, so other requests can run before that outcome. The clock never moves backward. Virtual delays do not sleep.
+
+`configure_failure("PaymentService", FailureConfig{FailureType::Timeout, 200, 100, 1})` times out every Payment request. The request starts at its scheduled time and times out 100 ms later, not 200 ms later. `every_nth_request` of 3 fails the 3rd, 6th, and so on. Each service has its own counter. Setting the policy again resets that counter. `FailureType::None` removes it.
+
+The console calls `run_stage4_demo()`. Order runs at 10 ms, Payment starts at 30 ms and times out at 130 ms, and Inventory runs at 50 ms. Inventory finishes first. `run_stage3_demo()` and `run_stage2_demo()` remain in the library.
 
 ## Domain model
 
@@ -172,7 +177,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp` and `tests/simulation_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
+`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, and `tests/failure_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
 
 ## Run
 
@@ -198,36 +203,37 @@ Version 0.1.0
 
 Status: Application initialized successfully.
 
-========== STAGE 3 SIMULATION ==========
-
-Simulation started.
-Virtual time: 0 ms
+========== STAGE 4 FAILURE INJECTION ==========
 
 [10 ms] REQ-001 -> OrderService
-Operation: CreateOrder
 Status: SUCCESS
 
 [30 ms] REQ-002 -> PaymentService
-Operation: ProcessPayment
-Status: SUCCESS
+Status: PROCESSING
 
 [50 ms] REQ-003 -> InventoryService
-Operation: ReserveInventory
 Status: SUCCESS
+
+[130 ms] REQ-002 -> PaymentService
+Status: TIMED OUT
 
 ========== SIMULATION REPORT ==========
 
 Trace: TRACE-001
 
 Processed Requests: 3
-Successful Requests: 3
+Successful Requests: 2
 Rejected Requests: 0
+Failed Requests: 0
+Timed Out Requests: 1
+Dropped Requests: 0
 Pending Requests: 0
+In Progress Requests: 0
 
 Total Events: 6
-Final Virtual Time: 50 ms
+Final Virtual Time: 130 ms
 
-Simulation completed successfully.
+Simulation completed.
 ```
 
 The process exits with status 0. If the report cannot be written, it prints an error to standard error and exits with status 1.
@@ -247,7 +253,8 @@ The process exits with status 0. If the report cannot be written, it prints an e
 ├── tests/
 │   ├── test_harness.hpp
 │   ├── domain_tests.cpp
-│   └── simulation_tests.cpp
+│   ├── simulation_tests.cpp
+│   └── failure_tests.cpp
 ├── docs/architecture.md
 └── README.md
 ```
@@ -261,7 +268,7 @@ The process exits with status 0. If the report cannot be written, it prints an e
 | 1 | Architecture and project setup | Implemented |
 | 2 | Service and event models | Implemented |
 | 3 | Simulation engine | Implemented |
-| 4 | Failure injection | Planned |
+| 4 | Failure injection | Implemented |
 | 5 | Resilience patterns | Planned |
 | 6 | Metrics and observability | Planned |
 | 7 | Interactive visualization | Planned |
@@ -269,7 +276,7 @@ The process exits with status 0. If the report cannot be written, it prints an e
 | 9 | Extended testing and CI | Planned |
 | 10 | Documentation and portfolio release | Planned |
 
-Stage 4, when approved, adds failure injection. The engine can record a rejected result without a change to `Service::handle`.
+Stage 5, when approved, adds retries and circuit breakers. Failure injection does not retry a timed-out or failed request.
 
 ## License
 

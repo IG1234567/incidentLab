@@ -8,7 +8,7 @@
 namespace incidentlab {
 
 void EventScheduler::schedule(Request request, SimulationClock::Time scheduled_time,
-                              SimulationClock::Time now) {
+                              SimulationClock::Time now, ScheduledAction action) {
     if (scheduled_time < now) {
         throw std::invalid_argument(
             "cannot schedule a request at " + std::to_string(scheduled_time) +
@@ -20,7 +20,7 @@ void EventScheduler::schedule(Request request, SimulationClock::Time scheduled_t
 
     const std::uint64_t sequence = next_sequence_;
     ++next_sequence_;
-    queue_.push(ScheduledEvent{scheduled_time, sequence, std::move(request)});
+    queue_.push(ScheduledEvent{scheduled_time, sequence, std::move(request), action});
 }
 
 std::optional<ScheduledEvent> EventScheduler::pop_next() {

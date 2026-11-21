@@ -5,7 +5,14 @@
 
 namespace incidentlab {
 
-enum class EventType { RequestReceived, RequestCompleted, RequestRejected };
+enum class EventType {
+    RequestReceived,
+    RequestCompleted,
+    RequestRejected,
+    RequestFailed,
+    RequestTimedOut,
+    RequestDropped
+};
 
 /// One recorded fact about a request.
 ///
@@ -32,6 +39,12 @@ inline const char* to_string(EventType type) noexcept {
         return "RequestCompleted";
     case EventType::RequestRejected:
         return "RequestRejected";
+    case EventType::RequestFailed:
+        return "RequestFailed";
+    case EventType::RequestTimedOut:
+        return "RequestTimedOut";
+    case EventType::RequestDropped:
+        return "RequestDropped";
     }
     return "RequestRejected";
 }
