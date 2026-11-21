@@ -51,6 +51,9 @@ add_library(incidentlab_core STATIC
     src/observability/stage6_demo.cpp
     src/visualization/visualization_model.cpp
     src/visualization/simulation_controller.cpp
+    src/scenarios/scenario_runner.cpp
+    src/scenarios/comparison_report.cpp
+    src/scenarios/stage8_demo.cpp
 )
 add_library(incidentlab::core ALIAS incidentlab_core)
 
@@ -89,6 +92,7 @@ add_executable(incidentlab_tests
     tests/resilience_tests.cpp
     tests/observability_tests.cpp
     tests/visualization_tests.cpp
+    tests/scenario_comparison_tests.cpp
 )
 target_link_libraries(incidentlab_tests PRIVATE incidentlab::core)
 target_include_directories(incidentlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -119,6 +123,7 @@ if(INCIDENTLAB_BUILD_GUI)
         src/gui/gui_main.cpp
         src/gui/ui_font.cpp
         src/gui/dashboard_renderer.cpp
+        src/gui/comparison_renderer.cpp
     )
     target_include_directories(incidentlab_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/gui)
     target_link_libraries(incidentlab_gui PRIVATE incidentlab::core)

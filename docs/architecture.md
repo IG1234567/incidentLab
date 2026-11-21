@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. Stage 7 adds a controller and an optional raylib window. The core library still does not include raylib.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. Stage 7 adds a controller and an optional raylib window. Stage 8 runs that same engine on four resilience configurations. The core library still does not include raylib.
 
 ## What exists now
 
@@ -32,9 +32,9 @@ flowchart LR
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
-| `incidentlab` | Print the startup banner and the Stage 6 metrics report. | `incidentlab::core` |
-| `incidentlab_gui` | Draw the controller's snapshot. Built only when raylib is found and the option is ON. | `incidentlab::core`, raylib |
-| `incidentlab_core` | Version, domain types, the engine, metrics, and the visualization controller. | C++ standard library only |
+| `incidentlab` | Print the startup banner and the Stage 6 metrics report. `--compare` prints the Stage 8 table. | `incidentlab::core` |
+| `incidentlab_gui` | Draw the live snapshot or the comparison. Built only when raylib is found and the option is ON. | `incidentlab::core`, raylib |
+| `incidentlab_core` | Version, domain types, the engine, metrics, the visualization controller, and scenario comparison. | C++ standard library only |
 | `incidentlab_tests` | Assert the domain rules, the simulation, and the controller. No window. | `incidentlab::core` |
 
 The library does not include `iostream`. `src/main.cpp` formats `ObservabilityReport`. Tests call the engine and the calculators directly.
@@ -282,6 +282,44 @@ flowchart TB
 
 The renderer reads a snapshot and sends commands back to the controller: start, pause, resume, step, reset, speed, and selection. It does not call `Service::handle`, inject failures, or recompute rates. `MetricsCalculator` is unchanged and does not include a raylib header.
 
+## Scenario comparison
+
+```mermaid
+flowchart TB
+    subgraph presentation [Presentation]
+        Console["incidentlab --compare"]
+        Window["Comparison view"]
+    end
+
+    subgraph core [incidentlab_core]
+        View["ComparisonView"]
+        Runner["ScenarioRunner"]
+        Engine["SimulationEngine"]
+        Metrics["MetricsCalculator"]
+        Report["ComparisonReport"]
+    end
+
+    Console --> Runner
+    Window --> View
+    View --> Runner
+    Runner --> Engine
+    Engine --> Metrics
+    Metrics --> Report
+    View --> Report
+```
+
+`ScenarioRunner::run` validates one `ScenarioConfig`, then constructs three scripted services and a new `SimulationEngine`. The services are members before the engine, so the engine is destroyed first. The runner schedules the shared workload, calls `run()`, and keeps `MetricsCalculator::calculate` plus the virtual end time. The config is not modified.
+
+`run_comparison` validates the whole set before the first run. An empty set returns an empty report. A duplicate id throws `std::invalid_argument` and does not run anything. Each scenario gets its own clock, scheduler, services, retry state, breaker, and dead-letter queue.
+
+The fault script is a list of statuses per request id. Attempt 1 uses the first status. A later attempt of that same request uses the next status. A service-wide failure counter is not what chooses the fault. Every attempt also has the same 20 ms slow-response delay, including Baseline. Retry and the circuit breaker are the only settings that change.
+
+The engine dead-letters a terminal failure only when the service has retry or a breaker. Baseline therefore has no dead-letter entries. The other three scenarios do, even though retry-only and circuit-breaker-only were not given a separate dead-letter feature.
+
+`delta_from_baseline` subtracts the Baseline value. For a rate, that difference is in percentage points. The relative percent is `(value - baseline) / baseline * 100`, and it is left unavailable when the baseline is zero. Missing throughput stays unavailable. The result is never NaN.
+
+`ComparisonView` caches the four results. Selection and the GUI do not call the engine. `rerun()` is the only refresh. The live `SimulationController` is a different object, so opening the comparison does not reset it and does not advance it.
+
 `VisualizationSnapshot` copies the observability report, the service rows, and the observed call edges. A test can keep that copy after the controller moves on. Selection is a service name and an event id, not a pointer.
 
 The scenario session is one object owned by `std::unique_ptr`. Its members are the services, then the engine. Destruction destroys the engine first, while the services are still alive. Reset constructs a new session before the old one is destroyed.
@@ -329,8 +367,8 @@ flowchart TB
 | 4 | `FailureConfig` inside `SimulationEngine` | Deterministic failure injection. Complete. |
 | 5 | Retry, `CircuitBreaker`, and `DeadLetterQueue` inside `SimulationEngine` | Resilience patterns. Complete. |
 | 6 | `MetricsCalculator` reads `SimulationReport` | Rates, latency, throughput, and the timeline. Complete. |
-| 7 | `SimulationController` in the core, `incidentlab_gui` beside it | raylib draws snapshots. It links `incidentlab::core` and contains no simulation rules. Implemented, pending review. |
-| 8 | scenario definitions | The same workload under two strategies. |
+| 7 | `SimulationController` in the core, `incidentlab_gui` beside it | raylib draws snapshots. It links `incidentlab::core` and contains no simulation rules. Complete. |
+| 8 | `ScenarioRunner` and `ComparisonReport` in the core | Four strategies, one workload, Stage 6 metrics. Implemented, pending review. |
 | 9 | GoogleTest, if vendored without a network fetch, and `.github/workflows/` | Broader tests and CI. |
 | 10 | release notes and a license | Portfolio write-up. |
 

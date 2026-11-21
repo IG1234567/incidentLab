@@ -38,6 +38,7 @@ struct NodeBox {
 
 struct Layout {
     Rectangle header;
+    Rectangle mode_bar;
     Rectangle controls;
     Rectangle topology;
     Rectangle metrics;
@@ -106,8 +107,10 @@ Layout make_layout(const VisualizationSnapshot& snapshot) {
     const bool roomy = roomy_layout();
     Layout layout;
     layout.header = Rectangle{margin, margin, width - 2.0F * margin, roomy ? 76.0F : 66.0F};
+    layout.mode_bar = Rectangle{margin, layout.header.y + layout.header.height + 8.0F,
+                                width - 2.0F * margin, 40.0F};
     layout.controls =
-        Rectangle{margin, layout.header.y + layout.header.height + 8.0F, width - 2.0F * margin,
+        Rectangle{margin, layout.mode_bar.y + layout.mode_bar.height + 8.0F, width - 2.0F * margin,
                   roomy ? 54.0F : 48.0F};
     const float footer_h = roomy ? 96.0F : 84.0F;
     layout.footer = Rectangle{margin, height - margin - footer_h, width - 2.0F * margin, footer_h};
@@ -640,7 +643,40 @@ void update_dashboard(SimulationController& controller) {
     }
 }
 
-void draw_dashboard(const VisualizationSnapshot& snapshot) {
+ModeButtons mode_buttons() {
+    const float height = static_cast<float>(std::max(GetScreenHeight(), 1));
+    const float margin = 12.0F;
+    const float header_h = height >= 820.0F ? 76.0F : 66.0F;
+    const float bar_y = margin + header_h + 8.0F;
+    ModeButtons buttons;
+    buttons.live = Rectangle{margin + 12.0F, bar_y + 6.0F, 210.0F, 28.0F};
+    buttons.comparison = Rectangle{buttons.live.x + 218.0F, buttons.live.y, 250.0F, 28.0F};
+    return buttons;
+}
+
+bool consume_mode_click(GuiMode& mode) {
+    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        return false;
+    }
+    const ModeButtons buttons = mode_buttons();
+    const Vector2 mouse = GetMousePosition();
+    if (CheckCollisionPointRec(mouse, buttons.live)) {
+        mode = GuiMode::LiveSimulation;
+        return true;
+    }
+    if (CheckCollisionPointRec(mouse, buttons.comparison)) {
+        mode = GuiMode::ScenarioComparison;
+        return true;
+    }
+    return false;
+}
+
+void draw_mode_buttons(const ModeButtons& buttons, GuiMode mode) {
+    draw_button(buttons.live, "LIVE SIMULATION", mode == GuiMode::LiveSimulation);
+    draw_button(buttons.comparison, "SCENARIO COMPARISON", mode == GuiMode::ScenarioComparison);
+}
+
+void draw_dashboard(const VisualizationSnapshot& snapshot, GuiMode mode) {
     const Layout layout = make_layout(snapshot);
     ClearBackground(kBackground);
     panel(layout.header, nullptr);
@@ -669,6 +705,7 @@ void draw_dashboard(const VisualizationSnapshot& snapshot) {
     std::snprintf(speed_label, sizeof(speed_label), "SPEED %s", to_string(snapshot.speed));
     draw_button(layout.speed, speed_label, true);
 
+    draw_mode_buttons(mode_buttons(), mode);
     draw_topology(layout, snapshot);
     draw_metrics(layout, snapshot);
     draw_timeline(layout, snapshot);

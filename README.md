@@ -4,7 +4,7 @@ IncidentLab is a distributed systems failure simulator for learning how a small 
 
 The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 7 of 10 is implemented and waiting for review.** The console still prints the Stage 1 banner and the Stage 6 metrics report. An optional raylib window can play the same engine. The core library does not depend on raylib, and the Debug and Release presets do not build the window.
+**Stage 8 of 10 is implemented and waiting for review.** The console still prints the Stage 6 metrics report. `./incidentlab --compare` prints the scenario comparison. An optional raylib window can play the Stage 7 scenario or show the comparison. The core library does not depend on raylib, and the Debug and Release presets do not build the window.
 
 ## Implemented features
 
@@ -24,14 +24,14 @@ The whole system runs in one process. Services are models. Nothing is deployed, 
 - A Stage 6 console demonstration
 - A visualization snapshot and a simulation controller that play one deterministic scenario
 - An optional `incidentlab_gui` window, built only when raylib is already installed and `INCIDENTLAB_BUILD_GUI` is ON
-- Automated tests for the domain model, the simulation, failure injection, resilience, observability, and the visualization controller
+- Automated tests for the domain model, the simulation, failure injection, resilience, observability, the visualization controller, and scenario comparison
+- Four predefined scenarios on one shared workload: Baseline, Retry Only, Circuit Breaker, and Full Resilience
 
 ## Planned features
 
 These are not in the build yet.
 
 - A simulated API gateway, event queue, and databases
-- Side-by-side comparison of resilience strategies
 - An interactive architecture view is optional and requires a local raylib install. It is not part of the default presets.
 - GoogleTest and a GitHub Actions workflow
 
@@ -218,7 +218,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, `tests/failure_tests.cpp`, `tests/resilience_tests.cpp`, `tests/observability_tests.cpp`, and `tests/visualization_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1. The visualization tests do not open a window and do not link raylib.
+`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, `tests/failure_tests.cpp`, `tests/resilience_tests.cpp`, `tests/observability_tests.cpp`, `tests/visualization_tests.cpp`, and `tests/scenario_comparison_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1. The visualization and comparison tests do not open a window and do not link raylib.
 
 ## Run
 
@@ -226,6 +226,7 @@ Single-config preset (Ninja, Makefiles, or MinGW):
 
 ```bash
 ./build/debug/incidentlab
+./build/debug/incidentlab --compare
 ```
 
 On Windows that file is `build\debug\incidentlab.exe`.
@@ -336,9 +337,59 @@ If CMake cannot find the package, pass `-Draylib_DIR=<prefix>/lib/cmake/raylib`.
 
 The window opens at 1440 by 900 and can be resized. The minimum size is 1024 by 700. The render target is 60 frames per second. Labels use the DejaVu Sans files in `assets/fonts`, which the build copies next to `incidentlab_gui`. Those files are the Bitstream Vera typefaces with the DejaVu changes, and `assets/fonts/LICENSE` is their notice. A system DejaVu Sans or Liberation Sans is used when the bundled files are absent. The built-in bitmap font is only the last fallback.
 
+`LIVE SIMULATION` keeps the Stage 7 controls. `SCENARIO COMPARISON` shows the four scenarios. Switching views does not reset the live simulation, and the comparison is not rerun on every frame. `RERUN` runs the four scenarios again.
+
 ### Known limits
 
-The dashboard shows one scenario. It does not compare strategies, export metrics, or replay the dead-letter queue. A request that starts and finishes in the same action does not appear as processing between steps. The order timeout and the payment probe do, because their finish is a later action. Request markers sit on the observed arrow. They are not a claim that a message traveled between processes.
+The live dashboard shows one playback scenario. It does not export metrics or replay the dead-letter queue. A request that starts and finishes in the same action does not appear as processing between steps. The order timeout and the payment probe do, because their finish is a later action. Request markers sit on the observed arrow. They are not a claim that a message traveled between processes.
+
+## Scenario comparison
+
+`ScenarioRunner` builds a fresh engine, fresh services, and a fresh clock for every scenario. It then asks `MetricsCalculator` for the Stage 6 report. The comparison does not contain a second simulator.
+
+The shared workload is ten requests, trace `TRACE-CMP`:
+
+| Arrival | Request | Service | Attempt 1 | Later attempts |
+| --- | --- | --- | --- | --- |
+| 0 ms | `REQ-001` | OrderService | Success | Success |
+| 10 ms | `REQ-002` | OrderService | Timed out | Success |
+| 20 ms | `REQ-003` | PaymentService | Failed | Success |
+| 30 ms | `REQ-004` | PaymentService | Failed | Failed |
+| 40 ms | `REQ-005` | PaymentService | Failed | Failed |
+| 50 ms | `REQ-006` | InventoryService | Failed | Success |
+| 60 ms | `REQ-007` | InventoryService | Failed | Failed |
+| 200 ms | `REQ-008` | PaymentService | Success | Success |
+| 700 ms | `REQ-009` | InventoryService | Success | Success |
+| 1000 ms | `REQ-010` | PaymentService | Success | Success |
+
+Every delivery also waits 20 ms. That delay is the same in every scenario. The fault is stored on the request id and that request's own attempt number. It does not use the engine's service-wide `every_nth_request` counter, because a retry would otherwise change which later request fails.
+
+| Scenario | Retry | Circuit breaker |
+| --- | --- | --- |
+| Baseline | Off | Off |
+| Retry Only | 2 attempts, 100 ms backoff, multiplier 2 | Off |
+| Circuit Breaker | Off | 2 consecutive failures, 400 ms reset |
+| Full Resilience | Same retry | Same breaker |
+
+The same settings are applied to OrderService, PaymentService, and InventoryService. The engine has no separate dead-letter switch. A terminal failure is dead-lettered when that service has a retry policy or a circuit breaker, so Retry Only and Circuit Breaker still produce dead-letter entries.
+
+Rates, latency, throughput, attempts, and dead letters use the Stage 6 definitions. Failure rate is the share of completed requests that were not successful, so it includes timeouts and circuit rejections. `Failed` in the table is only `ServiceStatus::Failed`. A success-rate delta is in percentage points. The relative percent is omitted when the baseline value is zero. Throughput is unavailable, not infinite, when the observation window is empty or zero.
+
+On this workload the calculated global results are:
+
+| Metric | Baseline | Retry Only | Circuit Breaker | Full Resilience |
+| --- | --- | --- | --- | --- |
+| Successful | 4 | 7 | 3 | 4 |
+| Success rate | 40% | 70% | 30% | 40% |
+| Average latency | 20 ms | 92 ms | 18 ms | 50 ms |
+| P95 latency | 20 ms | 140 ms | 20 ms | 140 ms |
+| Throughput | 9.80 req/s | 9.80 req/s | 9.80 req/s | 9.80 req/s |
+| Attempts | 10 | 16 | 9 | 10 |
+| Retry attempts | 0 | 6 | 0 | 3 |
+| Circuit rejected | 0 | 0 | 1 | 3 |
+| DLQ entries | 0 | 3 | 7 | 6 |
+
+Throughput matches because every scenario still finishes at 1020 ms. A lower average latency under the circuit breaker includes an immediate rejection, so it is not by itself a faster service.
 
 ## Project layout
 
@@ -350,13 +401,15 @@ The dashboard shows one scenario. It does not compare strategies, export metrics
 ├── include/incidentlab/     # public headers of the core library
 │   ├── simulation/          # clock, scheduler, engine, report
 │   ├── observability/       # metrics and the Stage 6 demo
-│   └── visualization/       # snapshot and simulation controller
+│   ├── visualization/       # snapshot and simulation controller
+│   └── scenarios/           # shared workload and comparison report
 ├── src/
 │   ├── main.cpp             # banner and report formatting
 │   ├── gui/                 # raylib window, compiled only when enabled
 │   ├── simulation/
 │   ├── observability/
 │   ├── visualization/
+│   ├── scenarios/
 │   └── *.cpp                # library implementation
 ├── tests/
 │   ├── test_harness.hpp
@@ -365,7 +418,8 @@ The dashboard shows one scenario. It does not compare strategies, export metrics
 │   ├── failure_tests.cpp
 │   ├── resilience_tests.cpp
 │   ├── observability_tests.cpp
-│   └── visualization_tests.cpp
+│   ├── visualization_tests.cpp
+│   └── scenario_comparison_tests.cpp
 ├── docs/architecture.md
 └── README.md
 ```
@@ -382,12 +436,12 @@ The dashboard shows one scenario. It does not compare strategies, export metrics
 | 4 | Failure injection | Complete |
 | 5 | Resilience patterns | Complete |
 | 6 | Metrics and observability | Complete |
-| 7 | Interactive visualization | Implemented — pending review |
-| 8 | Scenario comparison | Planned |
+| 7 | Interactive visualization | Complete |
+| 8 | Scenario comparison | Implemented — pending review |
 | 9 | Extended testing and CI | Planned |
 | 10 | Documentation and portfolio release | Planned |
 
-Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed. Stage 7 is not marked approved.
+Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed. Stage 8 is not marked approved.
 
 ## License
 

@@ -1,5 +1,8 @@
 #include "incidentlab/observability/stage6_demo.hpp"
+#include "incidentlab/scenarios/stage8_demo.hpp"
 #include "incidentlab/version.hpp"
+
+#include <cstring>
 
 #include <exception>
 #include <iomanip>
@@ -124,7 +127,17 @@ void print_timeline(std::ostream& out, const incidentlab::ObservabilityReport& r
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--compare") == 0) {
+        try {
+            incidentlab::run_stage8_demo(std::cout);
+        } catch (const std::exception& ex) {
+            std::cerr << "IncidentLab: scenario comparison failed: " << ex.what() << '\n';
+            return 1;
+        }
+        return std::cout ? 0 : 1;
+    }
+
     std::cout << kName << '\n'
               << kTagline << '\n'
               << "Version " << incidentlab::version_string() << "\n\n"
