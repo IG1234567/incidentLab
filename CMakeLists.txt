@@ -49,6 +49,8 @@ add_library(incidentlab_core STATIC
     src/simulation/stage5_demo.cpp
     src/observability/metrics_calculator.cpp
     src/observability/stage6_demo.cpp
+    src/visualization/visualization_model.cpp
+    src/visualization/simulation_controller.cpp
 )
 add_library(incidentlab::core ALIAS incidentlab_core)
 
@@ -86,9 +88,44 @@ add_executable(incidentlab_tests
     tests/failure_tests.cpp
     tests/resilience_tests.cpp
     tests/observability_tests.cpp
+    tests/visualization_tests.cpp
 )
 target_link_libraries(incidentlab_tests PRIVATE incidentlab::core)
 target_include_directories(incidentlab_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_compile_features(incidentlab_tests PRIVATE cxx_std_17)
 incidentlab_apply_warnings(incidentlab_tests)
 add_test(NAME incidentlab_domain COMMAND incidentlab_tests)
+
+# The window is optional. Debug and Release presets leave this OFF, so they do not need raylib.
+# IncidentLab does not download raylib.
+option(INCIDENTLAB_BUILD_GUI "Build the IncidentLab raylib GUI" OFF)
+
+if(INCIDENTLAB_BUILD_GUI)
+    find_package(raylib CONFIG QUIET)
+    if(NOT raylib_FOUND)
+        find_package(raylib QUIET)
+    endif()
+    if(NOT TARGET raylib AND NOT TARGET raylib::raylib)
+        message(FATAL_ERROR
+            "INCIDENTLAB_BUILD_GUI is ON, but raylib was not found.\n"
+            "Install raylib locally and point CMake at it, for example with "
+            "-Draylib_DIR=<prefix>/lib/cmake/raylib.\n"
+            "The core library, the console executable, and the tests do not need raylib. "
+            "Configure with -DINCIDENTLAB_BUILD_GUI=OFF to build those.\n"
+            "IncidentLab does not download raylib.")
+    endif()
+
+    add_executable(incidentlab_gui
+        src/gui/gui_main.cpp
+        src/gui/dashboard_renderer.cpp
+    )
+    target_include_directories(incidentlab_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/gui)
+    target_link_libraries(incidentlab_gui PRIVATE incidentlab::core)
+    if(TARGET raylib::raylib)
+        target_link_libraries(incidentlab_gui PRIVATE raylib::raylib)
+    else()
+        target_link_libraries(incidentlab_gui PRIVATE raylib)
+    endif()
+    target_compile_features(incidentlab_gui PRIVATE cxx_std_17)
+    incidentlab_apply_warnings(incidentlab_gui)
+endif()

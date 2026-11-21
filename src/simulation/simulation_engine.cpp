@@ -94,6 +94,15 @@ std::size_t SimulationEngine::run_next(std::size_t max_requests) {
     return finished;
 }
 
+bool SimulationEngine::step_once() {
+    if (!scheduler_.has_pending()) {
+        return false;
+    }
+    process(scheduler_.next());
+    scheduler_.discard_next();
+    return true;
+}
+
 void SimulationEngine::run() {
     while (scheduler_.has_pending()) {
         run_next(1);

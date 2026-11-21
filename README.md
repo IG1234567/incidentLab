@@ -4,7 +4,7 @@ IncidentLab is a distributed systems failure simulator for learning how a small 
 
 The whole system runs in one process. Services are models. Nothing is deployed, and nothing listens on a network.
 
-**Stage 6 of 10 is implemented.** The program prints the Stage 1 banner, then a metrics report calculated from one simulation. The window is not in the build yet.
+**Stage 7 of 10 is implemented and waiting for review.** The console still prints the Stage 1 banner and the Stage 6 metrics report. An optional raylib window can play the same engine. The core library does not depend on raylib, and the Debug and Release presets do not build the window.
 
 ## Implemented features
 
@@ -22,7 +22,9 @@ The whole system runs in one process. Services are models. Nothing is deployed, 
 - Metrics calculated from the simulation report: rates, latency, throughput, retries, circuit breakers, and the dead-letter queue
 - An incident timeline built from the event history
 - A Stage 6 console demonstration
-- Automated tests for the domain model, the simulation, failure injection, resilience, and observability
+- A visualization snapshot and a simulation controller that play one deterministic scenario
+- An optional `incidentlab_gui` window, built only when raylib is already installed and `INCIDENTLAB_BUILD_GUI` is ON
+- Automated tests for the domain model, the simulation, failure injection, resilience, observability, and the visualization controller
 
 ## Planned features
 
@@ -30,7 +32,7 @@ These are not in the build yet.
 
 - A simulated API gateway, event queue, and databases
 - Side-by-side comparison of resilience strategies
-- An interactive architecture view (raylib)
+- An interactive architecture view is optional and requires a local raylib install. It is not part of the default presets.
 - GoogleTest and a GitHub Actions workflow
 
 ## Technology stack
@@ -38,7 +40,7 @@ These are not in the build yet.
 | Now | Later, in the named stage |
 | --- | --- |
 | C++17, CMake, CTest, the C++ standard library | GoogleTest (Stage 9, only if it can be vendored without a download) |
-| Git | raylib (Stage 7) |
+| Git | raylib, only for the optional GUI (Stage 7) |
 |  | GitHub Actions (Stage 9) |
 
 The tests are an executable in `tests/`. CMake does not download GoogleTest. The simulation must keep working without the window.
@@ -55,7 +57,7 @@ A discrete-event simulation does not step through every millisecond. It keeps a 
 
 `ScheduledEvent` means "run this request later." `Event` means "this already happened." They are different types. Virtual time is stored beside the history, in `SimulationReport::event_times`, at the same index as `history.events()`. The history itself is unchanged from Stage 2.
 
-`run_next(n)` finishes at most n requests. `run_next(0)` does nothing. `run()` drains every queued start and finish. If a service throws, that start stays queued, nothing new is recorded for it, and the exception is not swallowed. A simulated failure is a normal outcome. It does not throw. `run_next` does not step one scheduler action. Stage 7 may need that kind of step to draw the timeline.
+`run_next(n)` finishes at most n requests. `run_next(0)` does nothing. `run()` drains every queued start and finish. If a service throws, that start stays queued, nothing new is recorded for it, and the exception is not swallowed. A simulated failure is a normal outcome. It does not throw. `run_next` is not one scheduler action. `step_once()` runs one Start or one Finish and returns false when the queue is empty. The window's Step control uses `step_once()`. It does not change `run_next()`.
 
 With no failure configuration, a request is received and completed at its scheduled time. A slow response, a delayed failure, or a timeout leaves a finish action on the same queue, so other requests can run before that outcome. The clock never moves backward. Virtual delays do not sleep.
 
@@ -117,10 +119,12 @@ Presentation depends on the core library. The library does not know how it is di
 flowchart LR
     subgraph presentation [Presentation]
         App["incidentlab executable"]
+        Gui["incidentlab_gui optional"]
     end
 
     subgraph core [incidentlab_core]
         Demo["Stage 6 demo"]
+        Controller["Simulation controller"]
         Metrics["Metrics calculator"]
         Engine["Simulation engine"]
         Domain["Services, requests, events"]
@@ -129,10 +133,14 @@ flowchart LR
     Tests["incidentlab_tests"]
 
     App --> Demo
+    Gui --> Controller
+    Controller --> Engine
+    Controller --> Metrics
     Demo --> Metrics
     Metrics --> Engine
     Engine --> Domain
     Tests --> Engine
+    Tests --> Controller
 ```
 
 ## Requirements
@@ -210,7 +218,7 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, `tests/failure_tests.cpp`, `tests/resilience_tests.cpp`, and `tests/observability_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1.
+`incidentlab_domain` is one CTest test. It runs every case in `tests/domain_tests.cpp`, `tests/simulation_tests.cpp`, `tests/failure_tests.cpp`, `tests/resilience_tests.cpp`, `tests/observability_tests.cpp`, and `tests/visualization_tests.cpp`. A failing case prints `FAILED` and the test process exits with status 1. The visualization tests do not open a window and do not link raylib.
 
 ## Run
 
@@ -276,6 +284,62 @@ INCIDENT TIMELINE
 
 Those values come from the engine. They are not printed from a fixed table. The process exits with status 0. If the report cannot be written, it prints an error to standard error and exits with status 1.
 
+## Interactive visualization
+
+The window is a view of `SimulationEngine`. It does not schedule its own outcomes, and frame time never becomes virtual time.
+
+```mermaid
+flowchart TB
+    Engine["SimulationEngine"] --> Report["SimulationReport"]
+    Report --> Calculator["MetricsCalculator"]
+    Calculator --> Observed["ObservabilityReport"]
+    Report --> Model["Visualization snapshot"]
+    Observed --> Model
+    Model --> Controller["SimulationController"]
+    Controller --> Engine
+    Controller --> Renderer["raylib dashboard"]
+```
+
+`SimulationController` owns one scenario session. The session owns the service objects and the engine, and the services are constructed before the engine is registered to use them. Reset replaces that session. It does not clear private engine fields.
+
+Step runs `step_once()`: one Start or one Finish. Start arms playback and does not schedule the scenario again. Pause keeps the clock where it is. Resume continues. The controller becomes Completed only when no start is pending and no request is in progress. Playback speed waits 1 s, 500 ms, 250 ms, or 125 ms of frame time between steps at 0.5x, 1x, 2x, and 4x. Each frame performs at most one step. There is no sleep in the render loop.
+
+The built-in scenario is deterministic:
+
+| Service | What the scenario does |
+| --- | --- |
+| OrderService | `REQ-O1` succeeds at 0 ms. `REQ-O2` starts at 10 ms and times out at 50 ms. |
+| PaymentService | Two failures open the circuit at 30 ms. `REQ-P3` is rejected at 40 ms. The probe starts at 530 ms and succeeds at 630 ms. |
+| InventoryService | `REQ-I1` fails, retries, and recovers. `REQ-I2` fails both attempts and is dead-lettered. |
+
+Arrows are calls from `client` that the scenario scheduled. A solid arrow has been seen in the history. A dashed arrow is still only scheduled. Neither arrow is a permanent dependency.
+
+Service colors: idle is slate, healthy is green, processing is blue, failed and circuit open are red, timed out is amber, and dropped is orange. A circuit that was not configured is labeled `NOT CONFIGURED`. Closed is green, open is red, and half-open is amber. The payment probe is the frame where the node says `PROCESSING` and the circuit says `HALF-OPEN`.
+
+The metrics panel prints the Stage 6 report. Throughput is `N/A` until a completed request has a non-zero observation window. Clicking a node selects it and filters the timeline. Clicking a timeline row shows that event's type, virtual time, request id, trace id, and service. Shortcuts are Space (start, or pause and resume), N (step), R (reset), and Esc (close).
+
+### Building the window
+
+raylib is not downloaded. The Debug and Release presets leave `INCIDENTLAB_BUILD_GUI` OFF.
+
+When raylib is already installed:
+
+```bash
+cmake -S . -B build/gui \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DINCIDENTLAB_BUILD_GUI=ON
+cmake --build build/gui
+./build/gui/incidentlab_gui
+```
+
+If CMake cannot find the package, pass `-Draylib_DIR=<prefix>/lib/cmake/raylib`. On a Linux machine where the distro package exists, the usual package is `libraylib-dev`. This repository does not install it. Without raylib, configuration of the GUI build stops with an error, and `cmake --preset debug` still builds the console and the tests.
+
+The window opens at 1440 by 900 and can be resized. The minimum size is 1024 by 700. The render target is 60 frames per second.
+
+### Known limits
+
+The dashboard shows one scenario. It does not compare strategies, export metrics, or replay the dead-letter queue. A request that starts and finishes in the same action does not appear as processing between steps. The order timeout and the payment probe do, because their finish is a later action. Request markers sit on the observed arrow. They are not a claim that a message traveled between processes.
+
 ## Project layout
 
 ```text
@@ -284,11 +348,14 @@ Those values come from the engine. They are not printed from a fixed table. The 
 ├── CMakePresets.json
 ├── include/incidentlab/     # public headers of the core library
 │   ├── simulation/          # clock, scheduler, engine, report
-│   └── observability/       # metrics and the Stage 6 demo
+│   ├── observability/       # metrics and the Stage 6 demo
+│   └── visualization/       # snapshot and simulation controller
 ├── src/
 │   ├── main.cpp             # banner and report formatting
+│   ├── gui/                 # raylib window, compiled only when enabled
 │   ├── simulation/
 │   ├── observability/
+│   ├── visualization/
 │   └── *.cpp                # library implementation
 ├── tests/
 │   ├── test_harness.hpp
@@ -296,7 +363,8 @@ Those values come from the engine. They are not printed from a fixed table. The 
 │   ├── simulation_tests.cpp
 │   ├── failure_tests.cpp
 │   ├── resilience_tests.cpp
-│   └── observability_tests.cpp
+│   ├── observability_tests.cpp
+│   └── visualization_tests.cpp
 ├── docs/architecture.md
 └── README.md
 ```
@@ -312,13 +380,13 @@ Those values come from the engine. They are not printed from a fixed table. The 
 | 3 | Simulation engine | Complete |
 | 4 | Failure injection | Complete |
 | 5 | Resilience patterns | Complete |
-| 6 | Metrics and observability | Implemented |
-| 7 | Interactive visualization | Planned |
+| 6 | Metrics and observability | Complete |
+| 7 | Interactive visualization | Implemented — pending review |
 | 8 | Scenario comparison | Planned |
 | 9 | Extended testing and CI | Planned |
 | 10 | Documentation and portfolio release | Planned |
 
-Stage 7, when approved, draws the simulation. Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed.
+Retries do not jitter, percentiles are nearest-rank, and the dead-letter queue is not replayed. Stage 7 is not marked approved.
 
 ## License
 

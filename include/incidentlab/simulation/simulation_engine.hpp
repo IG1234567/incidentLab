@@ -74,7 +74,15 @@ public:
 
     /// Finishes up to max_requests logical requests. Returns how many reached a final outcome.
     /// A retry or a delayed finish does not by itself count. A limit of 0 runs nothing.
+    /// This is not one scheduler action: a slow request's start and finish are separate actions,
+    /// and run_next keeps going until a logical request reaches a final outcome.
     std::size_t run_next(std::size_t max_requests);
+
+    /// Runs one scheduler action, a Start or a Finish. Returns false when nothing is queued.
+    ///
+    /// The visualization Step control uses this. It does not change run_next(). Virtual time
+    /// moves only as far as that one action requires.
+    bool step_once();
 
     /// Executes until no start or finish actions remain.
     void run();

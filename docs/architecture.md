@@ -2,7 +2,7 @@
 
 IncidentLab is a simulator. It models service calls and, in later stages, queues and failures inside one process. It does not deploy services, open sockets, or talk to a cloud provider.
 
-Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. The window is still Stage 7.
+Stage 1 fixed the dependency direction. Stage 2 added the domain model. Stage 3 runs that model on a virtual clock. Stage 4 injects deterministic failures. Stage 5 adds retry, a circuit breaker, and a dead-letter queue. Stage 6 calculates metrics from the simulation report. Stage 7 adds a controller and an optional raylib window. The core library still does not include raylib.
 
 ## What exists now
 
@@ -14,6 +14,7 @@ flowchart LR
 
     subgraph core [incidentlab_core]
         Version["Version"]
+        Controller["SimulationController"]
         Engine["SimulationEngine"]
         Domain["Request, Service, Event, EventHistory"]
     end
@@ -22,16 +23,19 @@ flowchart LR
 
     App -->|"prints"| Version
     App -->|"prints the report"| Engine
+    Controller --> Engine
     Engine --> Domain
     Tests --> Domain
     Tests --> Engine
+    Tests --> Controller
 ```
 
 | Component | Responsibility | Depends on |
 | --- | --- | --- |
 | `incidentlab` | Print the startup banner and the Stage 6 metrics report. | `incidentlab::core` |
-| `incidentlab_core` | Version, domain types, the Stage 2 script, and the simulation engine. | C++ standard library only |
-| `incidentlab_tests` | Assert the domain rules and the simulation. | `incidentlab::core` |
+| `incidentlab_gui` | Draw the controller's snapshot. Built only when raylib is found and the option is ON. | `incidentlab::core`, raylib |
+| `incidentlab_core` | Version, domain types, the engine, metrics, and the visualization controller. | C++ standard library only |
+| `incidentlab_tests` | Assert the domain rules, the simulation, and the controller. No window. | `incidentlab::core` |
 
 The library does not include `iostream`. `src/main.cpp` formats `ObservabilityReport`. Tests call the engine and the calculators directly.
 
@@ -171,7 +175,7 @@ A request that finishes at its start time adds two events at that same time. A d
 
 `std::priority_queue` is a max-heap. The comparator treats a later time, then a larger sequence number, as smaller, so `top()` is the earliest insertion. Scheduling and pop are O(log N). Service lookup is O(1) on average. Processing N queued requests is O(N log N). The sequence counter is `uint64_t`. The scheduler throws `std::overflow_error` before the counter would wrap and scramble equal-time order.
 
-`run_next(max_requests)` finishes at most that many requests. A start whose outcome is recorded later does not count as finished. Zero executes none. `run()` drains every start and finish action. Time and history stay as they are between calls. There is no public single-action step. Stage 7 may need one to draw the timeline action by action.
+`run_next(max_requests)` finishes at most that many requests. A start whose outcome is recorded later does not count as finished. Zero executes none. `run()` drains every start and finish action. Time and history stay as they are between calls. `step_once()` runs the next Start or Finish and leaves it queued if `process` throws. `run_next` still means "finish this many logical requests," not "run one action."
 
 A zero-delay outcome is recorded before the engine reads the next queued action, so Stage 3 order is unchanged. A later outcome is a `Finish` action on the same queue. If `handle` throws, the start stays queued, nothing new is recorded, and the exception propagates. A finish does not call `handle`. If committing it throws, the partial record is rolled back and the finish stays queued.
 
@@ -254,13 +258,45 @@ Dead-letter observations keep the request id, trace id, service, status, attempt
 
 A registered service that never appears in the report is omitted. In-progress attempts count as attempts and do not count as completed latency or throughput. Percentiles are not interpolated. The queue is not replayed, and nothing is drawn on screen.
 
+## Visualization
+
+```mermaid
+flowchart TB
+    subgraph gui [incidentlab_gui]
+        Window["Dashboard renderer"]
+    end
+
+    subgraph core [incidentlab_core]
+        Controller["SimulationController"]
+        Snapshot["VisualizationSnapshot"]
+        Calculator["MetricsCalculator"]
+        Engine["SimulationEngine"]
+    end
+
+    Window --> Controller
+    Controller --> Engine
+    Controller --> Snapshot
+    Engine --> Calculator
+    Calculator --> Snapshot
+```
+
+The renderer reads a snapshot and sends commands back to the controller: start, pause, resume, step, reset, speed, and selection. It does not call `Service::handle`, inject failures, or recompute rates. `MetricsCalculator` is unchanged and does not include a raylib header.
+
+`VisualizationSnapshot` copies the observability report, the service rows, and the observed call edges. A test can keep that copy after the controller moves on. Selection is a service name and an event id, not a pointer.
+
+The scenario session is one object owned by `std::unique_ptr`. Its members are the services, then the engine. Destruction destroys the engine first, while the services are still alive. Reset constructs a new session before the old one is destroyed.
+
+`PlaybackSpeed` changes how much frame time must accumulate before the next `step_once()`. The intervals are 1 s, 0.5 s, 0.25 s, and 0.125 s. Virtual timestamps stay on the scheduler. Pause clears the accumulated frame time.
+
+The node status is taken from the latest history and the breaker snapshot. Open wins over the last outcome. Half-open, or a received request that has not finished, is processing. Timed out and dropped stay distinct from failed. A service with no breaker stores an empty `optional`, which the window prints as `NOT CONFIGURED`.
+
 ## How later stages plug in
 
 ```mermaid
 flowchart TB
     subgraph presentation [Presentation]
         Console["Console shell"]
-        Viz["Visualization, Stage 7<br/>separate target"]
+        Viz["incidentlab_gui<br/>optional raylib target"]
     end
 
     subgraph core [incidentlab_core]
@@ -292,8 +328,8 @@ flowchart TB
 | 3 | `include/incidentlab/simulation/`, `src/simulation/` | Virtual clock, scheduler, and engine. Complete. |
 | 4 | `FailureConfig` inside `SimulationEngine` | Deterministic failure injection. Complete. |
 | 5 | Retry, `CircuitBreaker`, and `DeadLetterQueue` inside `SimulationEngine` | Resilience patterns. Complete. |
-| 6 | `MetricsCalculator` reads `SimulationReport` | Rates, latency, throughput, and the timeline. Implemented. |
-| 7 | a separate `incidentlab_viz` target | raylib. It links `incidentlab::core` and contains no simulation rules. |
+| 6 | `MetricsCalculator` reads `SimulationReport` | Rates, latency, throughput, and the timeline. Complete. |
+| 7 | `SimulationController` in the core, `incidentlab_gui` beside it | raylib draws snapshots. It links `incidentlab::core` and contains no simulation rules. Implemented, pending review. |
 | 8 | scenario definitions | The same workload under two strategies. |
 | 9 | GoogleTest, if vendored without a network fetch, and `.github/workflows/` | Broader tests and CI. |
 | 10 | release notes and a license | Portfolio write-up. |
@@ -305,8 +341,9 @@ The Stage 2 tests are an executable with assertions, registered with CTest. Goog
 - **Domain** answers what a request, a service, and an event are.
 - **The Stage 2 script** answers what one fixed trace does. It is not the simulation.
 - **Metrics** reads a finished report. It does not run the simulation or format text.
-- **Presentation** prints the banner and the observability report.
-- **Tests** call the core directly. They do not start from `main()`.
+- **Presentation** prints the banner and the observability report, or draws a snapshot.
+- **The controller** decides when the engine may run the next action. It does not invent outcomes.
+- **Tests** call the core directly. They do not start from `main()` and they do not open a window.
 
 ## Decisions
 
