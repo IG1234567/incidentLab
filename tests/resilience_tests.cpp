@@ -504,7 +504,8 @@ INCIDENTLAB_TEST(equal_timestamp_retry_keeps_sequence_order) {
     engine.schedule_request(make_request("REQ-B", "OrderService", "CreateOrder"), 20);
     engine.run();
     std::vector<std::string> received;
-    for (const incidentlab::Event& event : engine.report().history.events()) {
+    const incidentlab::SimulationReport report = engine.report();
+    for (const incidentlab::Event& event : report.history.events()) {
         if (event.type == incidentlab::EventType::RequestReceived) {
             received.push_back(event.request_id);
         }
