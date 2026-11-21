@@ -9,7 +9,7 @@ endif()
 
 project(
     IncidentLab
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "Distributed Systems Failure Simulator"
     LANGUAGES CXX
 )

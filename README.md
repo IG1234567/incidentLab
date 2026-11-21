@@ -109,7 +109,7 @@ cmake --preset release && cmake --build --preset release
 ctest --test-dir build/release --output-on-failure
 ```
 
-This release check, with the GUI left off, rebuilt Debug and Release with no compiler warnings. All 8 CTest suites passed in both configurations. The GCC sanitizer build and the coverage build also passed. Regenerated core coverage was:
+After `project(VERSION)` was set to 1.0.0, Debug, Release, the GUI, the GCC sanitizer build, and the coverage build were rebuilt with no compiler warnings. All 8 CTest suites passed in Debug, Release, and the sanitizer build. Regenerated core coverage was:
 
 ```text
 Line coverage:     84.3% (1472/1747)
@@ -118,7 +118,7 @@ Function coverage: 91.8% (167/182)
 
 That measurement covers `incidentlab_core` under `src/` and `include/incidentlab/`. It excludes tests, `src/gui/`, and generated files.
 
-GitHub Actions on commit `36ae182` completed successfully for GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage: [run 44953893069](https://github.com/IG1234567/incidentLab/actions/runs/44953893069). Documentation added after that commit has not been pushed, so it has not been through Actions yet.
+GitHub Actions on commit `92db659` completed successfully for GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage: [run 44955843729](https://github.com/IG1234567/incidentLab/actions/runs/44955843729). The version change to 1.0.0 is local until that commit is pushed, so Actions has not built it yet.
 
 [![CI](https://github.com/IG1234567/incidentLab/actions/workflows/ci.yml/badge.svg)](https://github.com/IG1234567/incidentLab/actions/workflows/ci.yml)
 
@@ -155,14 +155,12 @@ The project is an educational and portfolio exercise. It demonstrates object-ori
 
 ## Limitations
 
-IncidentLab is a simulator. It is not a production distributed system. There is no network, no persistence, no authentication, and no replay of the dead-letter queue. Virtual time does not sleep. Percentiles use nearest-rank. Retries do not jitter. One service has one failure policy. The binary still reports version 0.1.0; the 1.0.0 notes in this repository are a release candidate, not a published release. This check did not build with MSVC.
+IncidentLab is a simulator. It is not a production distributed system. There is no network, no persistence, no authentication, and no replay of the dead-letter queue. Virtual time does not sleep. Percentiles use nearest-rank. Retries do not jitter. One service has one failure policy. The console reports version 1.0.0 from `project(VERSION)`. That number is the release candidate. There is no `v1.0.0` tag and no published GitHub Release. The window does not print a version. This check did not build with MSVC.
 
 ## Future improvements
 
 These are not implemented.
 
-- A project license chosen by the maintainer
-- A version bump to 1.0.0 after that choice is approved
 - Dead-letter replay
 - More than one failure policy on a service
 - A verified Windows build
@@ -170,9 +168,9 @@ These are not implemented.
 
 ## License
 
-The application source does not yet have a project license. MIT and Apache-2.0 are both workable options; neither has been selected. Do not treat the source as licensed for redistribution until a `LICENSE` file is added.
+The application source and documentation are under the [MIT License](LICENSE). Copyright (c) 2026 Inga Gaidukove.
 
-The window uses DejaVu Sans and DejaVu Sans Bold. Those files and the Bitstream Vera / DejaVu notice are in `assets/fonts/`. DejaVu changes are in the public domain. The upstream notice must stay with the font files.
+The window uses DejaVu Sans and DejaVu Sans Bold. Those files and the Bitstream Vera / DejaVu notice are in `assets/fonts/`. That notice is separate from the MIT License. DejaVu changes are in the public domain. The upstream notice must stay with the font files.
 
 ## Documentation
 

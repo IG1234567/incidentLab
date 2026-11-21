@@ -1,47 +1,47 @@
 # Release checklist
 
-Checked items were verified in the release-check environment on the uncommitted documentation tree, or against the public Actions run named in the item. Unchecked items are not done.
+Nothing in this checklist publishes a release. Checked items were verified on the local tree after `project(VERSION)` was set to 1.0.0, or against the named Actions run.
 
-The binary version is still 0.1.0. Nothing in this checklist publishes a release.
+## Completed
 
-## Code
+### Code
 
-- [x] Debug build passes.
-- [x] Release build passes.
-- [x] GUI build passes with a local raylib install.
-- [x] No compiler warnings in those four local builds.
+- [x] GCC Debug build passes, with no compiler warnings. `./build/debug/incidentlab` prints `Version 1.0.0`.
+- [x] GCC Release build passes, with no compiler warnings. `./build/release/incidentlab` prints `Version 1.0.0`.
+- [x] GUI build passes. `incidentlab_gui` linked. The window does not display a version.
 - [x] No known critical simulation bug in the suites that ran.
 
-## Tests
+### Tests
 
 - [x] All eight CTest suites pass in Debug and Release.
 - [x] GCC AddressSanitizer and UndefinedBehaviorSanitizer pass with leak detection on.
-- [x] Coverage generated: 84.3% lines (1472/1747) and 91.8% functions (167/182) for `incidentlab_core`.
-- [ ] GitHub Actions green on the release-candidate tree. The last pushed commit, `36ae182`, is green. This documentation has not been pushed.
+- [x] Coverage regenerated after the version change: 84.3% lines (1472/1747) and 91.8% functions (167/182) for `incidentlab_core`.
+- [x] GitHub Actions on `92db659` is green for GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage. That commit does not contain the 1.0.0 version change.
 
-## Documentation
+### Documentation
 
-- [x] README written for a first-time reader.
-- [x] Architecture documented.
-- [x] OOP design documented from the real types.
-- [x] User guide complete for the console flags and the window controls that exist.
-- [x] Build guide complete for the verified commands.
-- [x] Screenshots captured from the running window and stored in `docs/screenshots/`.
-- [x] Demo script written against those controls and the locked metrics.
+- [x] README, architecture, OOP design, user guide, and build guide agree on the commands and the version source.
+- [x] Screenshot files exist and the README links resolve. The captures show the running window with readable text.
+- [x] Release notes stay marked unpublished.
+- [x] Changelog records `[1.0.0] — Unreleased`.
 
-## Repository
+### Repository
 
-- [x] `.gitignore` excludes build trees, objects, and coverage data.
+- [x] `.gitignore` excludes build trees.
 - [x] No credentials found in the tracked files reviewed for this pass.
-- [x] No generated binaries are tracked. Fonts and their license are tracked on purpose.
-- [ ] Project license reviewed and chosen. There is no `LICENSE` file. DejaVu's notice is present.
-- [ ] GitHub description and topics applied by the repository owner. Suggested text is in `docs/portfolio-description.md`.
+- [x] No generated binaries are tracked. The DejaVu files and `assets/fonts/LICENSE` stay tracked.
+- [x] Internal Markdown links in the documentation resolve.
+- [x] MIT License is in the repository root. Copyright (c) 2026 Inga Gaidukove. `assets/fonts/LICENSE` is unchanged.
 
-## Release
+## Pending user approval
 
-- [ ] Compiled version set to 1.0.0. It is 0.1.0 until you approve the bump.
-- [x] Changelog drafted as `[1.0.0] — Unreleased`.
-- [x] Release-candidate notes drafted. They do not say the release is published.
-- [ ] You approve publication.
-- [ ] Git tag created manually after that approval.
-- [ ] GitHub Release published manually after that approval.
+- [ ] Commit the version change, the MIT License, and the documentation updates.
+- [ ] Push that commit.
+- [ ] Wait until GitHub Actions is green on that exact commit.
+- [ ] Create the annotated tag `v1.0.0` manually.
+- [ ] Publish the GitHub Release manually from that tag, using `docs/release-notes-v1.0.0.md`.
+- [ ] Set the GitHub description and topics listed in `docs/portfolio-description.md`.
+
+## Blocked
+
+No technical blocker was found in the builds run for this preparation. Publication stays blocked on the approvals above, not on a failing build.

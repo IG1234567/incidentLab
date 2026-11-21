@@ -70,4 +70,4 @@ Each decision below is one that the code actually follows.
 
 **Benefits.** A laptop without GitHub can build and test. CI uses the same commands. The suite name in the CTest output points at the file. Sanitizer failures fail the process because leak detection and `halt_on_error` stay on.
 
-**Trade-offs.** CTest shows eight lines, not 245. The executable prints the individual names. Coverage does not include the GUI. A green run applies to the commit that was built. The documentation added for the release candidate is not in the commit whose workflow has already passed.
+**Trade-offs.** CTest shows eight lines, not 245. The executable prints the individual names. Coverage does not include the GUI. A green run applies to the commit that was built. The workflow on `92db659` passed. Later local edits, including the version change to 1.0.0, are not in that run until they are pushed.

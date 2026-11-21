@@ -1,6 +1,6 @@
 # IncidentLab v1.0.0 — Release Candidate
 
-This document prepares a release. It is not a published GitHub Release, and there is no `v1.0.0` tag. The program still prints version 0.1.0.
+This document prepares a release. It is not a published GitHub Release, and there is no `v1.0.0` tag. The console prints version 1.0.0. The window does not display a version.
 
 ## Overview
 
@@ -37,9 +37,9 @@ Retry applies to `Failed`, `TimedOut`, and `Dropped`. It does not apply to `Reje
 
 ## Testing and CI
 
-The test executable contains 245 cases in eight CTest suites. This release check passed Debug, Release, the GUI target, GCC sanitizers, and coverage generation, with no compiler warnings. Regenerated core coverage was 84.3% of lines (1472/1747) and 91.8% of functions (167/182). GUI sources and tests are excluded.
+The test executable contains 245 cases in eight CTest suites. After the version change, this check passed GCC Debug, GCC Release, the GUI target, GCC sanitizers, and coverage generation, with no compiler warnings. Regenerated core coverage was 84.3% of lines (1472/1747) and 91.8% of functions (167/182). GUI sources and tests are excluded.
 
-GitHub Actions on commit `36ae182` succeeded for GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage: https://github.com/IG1234567/incidentLab/actions/runs/44953893069. That run does not include later documentation edits until they are pushed.
+GitHub Actions on commit `92db659` succeeded for GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage: https://github.com/IG1234567/incidentLab/actions/runs/44955843729. That commit does not include the local 1.0.0 version change. Actions cannot validate unpushed files.
 
 ## Build requirements
 
@@ -48,9 +48,20 @@ CMake 3.20 or newer, a C++17 compiler, and a build directory that is not the sou
 ## Known limitations
 
 - The simulator does not open sockets, store data, or call a cloud API.
-- There is no project license yet. DejaVu fonts in `assets/fonts/` keep their own notice.
-- The compiled version is 0.1.0.
+- The application uses the MIT License, Copyright (c) 2026 Inga Gaidukove. DejaVu fonts in `assets/fonts/` keep their own notice.
+- The console version is 1.0.0, and the release is not tagged.
 - MSVC was not built in this check.
-- Headless tests do not prove the pixels of the window. The screenshots were captured separately.
+- Headless tests do not prove the pixels of the window. The screenshots were captured separately from the running application.
 - Coverage below 100% is reported as measured. No gate was added.
 - A clean sanitizer run does not prove every future lifetime is safe.
+
+## Publication
+
+Do not run these commands until the version change has been committed, pushed, and GitHub Actions is green on that exact commit. Then:
+
+```bash
+git tag -a v1.0.0 -m "IncidentLab v1.0.0"
+git push origin v1.0.0
+```
+
+Create the GitHub Release from the tag `v1.0.0` and paste this document as the release notes. Leave the release unpublished until that Actions run is green. These commands were not executed for this preparation.

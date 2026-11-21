@@ -7,7 +7,7 @@ Before you start, have these ready:
 - `./build/debug/incidentlab`
 - `./build/debug/incidentlab --compare`
 - `./build/gui/incidentlab_gui`
-- The GitHub Actions run for commit `36ae182`: https://github.com/IG1234567/incidentLab/actions/runs/44953893069
+- The GitHub Actions run for commit `92db659`: https://github.com/IG1234567/incidentLab/actions/runs/44955843729
 
 Do not press Escape until you intend to close the window.
 
@@ -63,7 +63,7 @@ If you also want the text form, show `./build/debug/incidentlab --compare` and p
 
 ## 3:15–4:00 — Testing and CI
 
-Open the Actions run. Five jobs are green on `36ae182`: GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage.
+Open the Actions run. Five jobs are green on `92db659`: GCC Debug, GCC Release, Clang Debug, GCC ASan and UBSan, and GCC coverage. Say that a later local edit is not part of that run until it is pushed.
 
 Locally, `ctest --test-dir build/debug --output-on-failure` reports eight suites. Say that each suite is a source file and that the executable contains 245 cases. `./build/debug/incidentlab_tests --list` shows the names if someone asks.
 
@@ -75,6 +75,6 @@ The hard parts were keeping one definition of a completed request, making retry 
 
 What this project practices is object-oriented C++, a discrete-event model, measurable resilience patterns, and a presentation layer that can be absent in CI.
 
-What it does not do: talk to real services, replay the dead-letter queue, or claim that Full Resilience wins on every workload. A license has not been chosen. The binary still reports 0.1.0. Those are the release notes, not missing simulation features.
+What it does not do: talk to real services, replay the dead-letter queue, or claim that Full Resilience wins on every workload. The console reports 1.0.0. The source is under the MIT License. There is no release tag. Those are the release notes, not missing simulation features.
 
-Possible later work, not part of the demo: a chosen license, a version bump, dead-letter replay, and a verified Windows build.
+Possible later work, not part of the demo: dead-letter replay and a verified Windows build.

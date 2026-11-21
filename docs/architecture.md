@@ -2,7 +2,7 @@
 
 IncidentLab simulates service calls inside one process. Virtual time replaces the system clock. Nothing listens on a network.
 
-The core library does not include raylib, and the default CMake presets do not build the window. Stages 1 through 7 are in the library. Stage 8 comparison and Stage 9 tests are implemented. The 1.0.0 notes are a release candidate. The compiled version string is still 0.1.0.
+The core library does not include raylib, and the default CMake presets do not build the window. Stages 1 through 7 are in the library. Stage 8 comparison and Stage 9 tests are implemented. The console version string is 1.0.0, taken from `project(VERSION)`. The release is not tagged or published.
 
 ## Layers
 
@@ -137,4 +137,4 @@ Full Resilience does not have the highest success rate on this workload. The bre
 
 Sanitizer and coverage flags are public compile and link options of `incidentlab_core`, off by default, and mutually exclusive. The workflow in `.github/workflows/ci.yml` uses `contents: read`, Ubuntu 24.04, and no secrets. GCC covers Debug, Release, sanitizers, and coverage. Clang covers an extra Debug job.
 
-The workflow on commit `36ae182` succeeded for all five jobs. Coverage regenerated during this release check was 84.3% of lines (1472/1747) and 91.8% of functions (167/182) in the core. GUI sources are outside that scope.
+The workflow on commit `92db659` succeeded for all five jobs: https://github.com/IG1234567/incidentLab/actions/runs/44955843729. That commit does not include the later local version change. Coverage regenerated during this release check is reported in `docs/testing.md`. GUI sources are outside that scope.

@@ -1,6 +1,6 @@
 # Changelog
 
-The version in this file is the release candidate. It has not been tagged or published. The binary still reports `0.1.0` from `project(VERSION)` in `CMakeLists.txt`.
+The version in this file is the release candidate. It has not been tagged or published. The console reports `1.0.0` from `project(VERSION)` in `CMakeLists.txt`.
 
 ## [1.0.0] — Unreleased
 
@@ -25,6 +25,4 @@ The version in this file is the release candidate. It has not been tagged or pub
 
 ### Not in this candidate
 
-- A chosen project license.
-- A compiled version of 1.0.0.
-- A Git tag or a GitHub Release.
+- A Git tag or a GitHub Release. The MIT License is present, and the release is still unpublished.

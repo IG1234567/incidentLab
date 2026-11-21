@@ -11,7 +11,7 @@ From a Debug build:
 ./build/debug/incidentlab --compare
 ```
 
-`incidentlab` with no arguments prints the version line and the Stage 6 metrics report. The version string comes from `project(VERSION)` in `CMakeLists.txt`. The current value is `0.1.0`.
+`incidentlab` with no arguments prints the version line and the Stage 6 metrics report. The version string comes from `project(VERSION)` in `CMakeLists.txt`. The current value is `1.0.0`. The window does not display a version. The number is not a published release tag.
 
 `incidentlab --compare` prints only the Stage 8 comparison. It does not also print the Stage 6 report.
 

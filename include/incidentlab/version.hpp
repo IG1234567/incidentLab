@@ -17,7 +17,7 @@ struct Version {
 /// Version of this build. The numbers come from project(VERSION) in CMakeLists.txt.
 Version current_version() noexcept;
 
-/// "major.minor.patch", for example "0.1.0".
+/// "major.minor.patch", for example "1.0.0".
 /// Digits are formatted without locale-specific separators.
 std::string version_string();
 
